@@ -1,0 +1,48 @@
+43a44,65
+> class ExecuteHook(object):
+>     def __init__(self, meth, args, kwargs):
+>         self.meth = meth
+>         self.args = args
+>         self.kwargs = kwargs
+> 
+>     def setup(self):
+>         pass
+> 
+>     def teardown(self):
+>         pass
+> 
+>     def pre_meth(self):
+>         pass
+> 
+>     def post_meth(self):
+>         pass
+> 
+> _hooks = []
+> def add_execute_hook(hook_cls):
+>     _hooks.append(hook_cls)
+> 
+73c95
+<         (e,meth,args,kwargs) = msg
+---
+>         (e,hooks,meth,args,kwargs) = msg
+74a97,98
+>         for hook in hooks:
+>             hook.pre_meth()
+80a105,106
+>         for hook in reversed(hooks):
+>             hook.pre_meth()
+117c143,149
+<     reqq.put((e,meth,args,kwargs))
+---
+> 
+>     hooks = []
+>     for hook_cls in _hooks:
+>         hooks.append(hook_cls(meth, args, kwargs))
+>         hooks[-1].setup()
+> 
+>     reqq.put((e,hooks,meth,args,kwargs))
+119a152,155
+> 
+>     for hook in reversed(hooks):
+>         hook.teardown()
+> 
