@@ -25,6 +25,7 @@ from oslo.config import cfg
 from nova import config
 from nova.openstack.common import log as logging
 from nova import service
+import nova.consoleauth.manager
 
 CONF = cfg.CONF
 

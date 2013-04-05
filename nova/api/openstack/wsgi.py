@@ -27,6 +27,7 @@ from nova.api.openstack import xmlutil
 from nova import exception
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
 from nova import wsgi
 
 
@@ -1027,7 +1028,18 @@ class Resource(wsgi.Application):
     def dispatch(self, method, request, action_args):
         """Dispatch a call to the action-specific method."""
 
-        return method(req=request, **action_args)
+        action = method.__name__
+        controller = method.__module__.split('.')[-1]
+        name = '%s/%s' % (controller, action)
+
+        trace.trace_current_request({'name': name,
+                                     'type': 'api',
+                                     'api': {'action': action,
+                                             'controller': controller,
+                                             'action_args': action_args}})
+
+        with trace.Tracer(name):
+            return method(req=request, **action_args)
 
 
 def action(name):

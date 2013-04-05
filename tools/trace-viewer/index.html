@@ -1,0 +1,250 @@
+<!--
+
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+    body { 
+        border: 0;
+        padding: 0;
+        margin: 0;
+        height: 100%;
+        width: 100%;
+    }
+    #viewer {
+        left: 400px;
+        top: 0;
+        bottom: 0;
+        right: 0;
+        border: 0;
+        margin: 0;
+        position: absolute;
+    }
+
+    #viewer iframe {
+        border: 0;
+        padding: 0;
+        width: 100%;
+        height: 99%;
+    }
+
+    #show_nav {
+        display: none;
+        position: absolute;
+        background-color: white;
+        z-index: 1;
+    }
+
+    #nav {
+        width: 394px;
+        height: 100%;
+        background-color: #ccc;
+        float: left;
+        padding-right: 5px;
+        border-right: 1px solid black;
+        position: absolute;
+    }
+
+    #nav #error {
+        display: none;
+    }
+
+    #nav ul {
+        list-style-type: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .error {
+        color: red;
+        font-weight: bold;
+        background: white;
+    }
+
+    .trace_start_time {
+        float: right;
+        margin-left: 1em;
+    }
+
+    .trace_duration {
+        float: right;
+    }
+
+    .trace_duration:after {
+    }
+
+    .trace_desc {
+    }
+
+    .trace_req {
+        color: #888;
+        font-size: small;
+        display: block;
+        margin-left: 20px;
+    }
+
+
+    #options {
+        float: right;
+        display: inline;
+    }
+
+    input {
+        float: left;
+    }
+
+    #traces label {
+        display: block;
+        width: 100%;
+        height: 100%;
+        padding-bottom: 2px;
+        padding-top: 2px;
+        padding-right: 5px;
+    }
+    #traces label:hover {
+        background-color: #ddd;
+        cursor: pointer;
+    }
+
+</style>
+<script type="text/javascript" src="jquery-1.9.1.min.js"></script>
+<script type="text/javascript">
+
+var traces = [];
+
+function hide_nav()
+{
+    $('#nav').hide();
+    $('#show_nav').show();
+    $('#viewer').css('left', '0px');
+}
+function show_nav()
+{
+    $('#nav').show();
+    $('#show_nav').hide();
+    $('#viewer').css('left', '400px');
+}
+
+function refresh_nav()
+{
+    $('#nav #status').text('Loading ...');
+    $.ajax('/traces')
+    .done(function(data, status, xhr) {
+        data.sort(function(a,b) {return a.start - b.start;});
+
+        var form = $('#traces');
+        form.html('');
+        var list = $('<ul/>');
+        form.append(list);
+        var i;
+        var shown = 0;
+        traces = [];
+        for (i = 0; i < data.length; i++) {
+            var trace = data[i];
+
+            if (trace.args.type == 'api' && 
+                $.inArray(trace.args.api.action, ['detail', 'show']) != -1)
+                continue;
+
+            traces.push(trace);
+
+            var li = $('<li/>');
+            var label = $('<label/>');
+            var start_label = $('<span class="trace_start_time"/>');
+            var duration_label = $('<span class="trace_duration"/>');
+            var desc_label = $('<span class="trace_desc"/>');
+            var req_label = $('<span class="trace_req"/>');
+            var input = $('<input type="checkbox"/>')
+            input.attr({value: String(traces.length - 1)});
+            list.append(li);
+            li.append(label);
+            label.append(input);
+            label.append(desc_label);
+            label.append(start_label);
+            label.append(duration_label);
+            label.append(req_label);
+
+            var start = new Date(trace.start / 1000);
+            start_label.text(start.toLocaleString());
+
+            var duration = (trace.end - trace.start);
+            var duration_units = 'us';
+            if (duration > 1000000) {
+                duration = (duration / 1000000).toFixed(2);
+                duration_units = 's';
+            } else if (duration > 1000) {
+                duration = (duration / 1000).toFixed(2);
+                duration_units = 'ms';
+            }
+            duration_label.text(duration + duration_units);
+
+            var desc = trace.args.api.controller + '/' + trace.args.api.action;
+            if (trace.args.api.controller = 'servers' &&
+                trace.args.api.action == 'create') {
+                trace.args.api.action_args.body.server.name;
+            }
+            desc_label.text(desc);
+
+            req_label.text(trace.req);
+
+            input.change(update_viewer);
+        }
+        $('#nav #error').hide();
+        $('#nav #status').text(data.length + ' traces');
+    })
+    .fail(function(data, status, error) {
+        $('#nav #error').show();
+    });
+}
+
+function update_viewer() {
+    var form = $('#traces')[0];
+    var selected = [];
+    $.each(form.elements, function(i, e) {
+        if (e.checked) {
+            selected.push(traces[Number(e.value)]);
+        }
+    });
+    if ($('#options')[0].elements.sort_by_duration.checked) {
+        selected.sort(function(a, b) {
+            return (a.end - a.start) - (b.end - b.start);
+        });
+    }
+    var url = 'trace_viewer.html?paths=' +
+              selected.map(function(trace) { return trace.path }).join(',');
+    $('#viewer iframe').attr('src', url);
+}
+
+function init() {
+    refresh_nav();
+    $('#options').change(update_viewer);
+}
+
+$(document).ready(init);
+</script>
+</head>
+<body>
+<div id="nav">
+    <a href="javascript:hide_nav()">Hide</a>
+    <a href="javascript:refresh_nav()">Refresh</a>
+    <span id="error" class="error">ERROR</span>
+    <span id="status"></span>
+    <form id="options">
+        <label>
+            <input name="sort_by_duration" type="checkbox"/> sort by duration
+        </label>
+    </form>
+    <div id="list">
+        <form id="traces">
+        </form>
+    </div>
+</div>
+<div id="show_nav">
+    <a href="javascript:show_nav()">Show</a>
+</div>
+<div id="viewer">
+    <iframe id="iframe" />
+</div>
+</body>
+</html>

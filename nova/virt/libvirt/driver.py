@@ -75,6 +75,7 @@ from nova.openstack.common import fileutils
 from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
 from nova.openstack.common.notifier import api as notifier
 from nova import utils
 from nova import version
@@ -283,6 +284,7 @@ MIN_LIBVIRT_LIVESNAPSHOT_VERSION = (1, 0, 0)
 MIN_QEMU_LIVESNAPSHOT_VERSION = (1, 3, 0)
 
 
+@trace.traced()
 class LibvirtDriver(driver.ComputeDriver):
 
     capabilities = {
@@ -296,6 +298,8 @@ class LibvirtDriver(driver.ComputeDriver):
         global libvirt
         if libvirt is None:
             libvirt = __import__('libvirt')
+            libvirt.virConnect = trace.traced()(libvirt.virConnect)
+            libvirt.virDomain = trace.traced()(libvirt.virDomain)
 
         self._host_state = None
         self._initiator = None

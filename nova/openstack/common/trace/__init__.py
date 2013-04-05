@@ -1,0 +1,198 @@
+import inspect
+import json
+import os
+import sys
+import tempfile
+import thread
+import time
+import types
+import errno
+
+from eventlet import patcher, tpool
+
+from nova.openstack.common import local
+
+from oslo.config import cfg
+
+trace_opts = [
+    cfg.StrOpt('trace_dir', default=tempfile.gettempdir()),
+]
+
+CONF = cfg.CONF
+CONF.register_cli_opts(trace_opts)
+
+_native_threading = patcher.original('threading')
+
+_native_local = _native_threading.local()
+
+class RequestIdHook(tpool.ExecuteHook):
+    request_id = None
+
+    def setup(self):
+        try:
+            self.request_id = local.store.context.request_id
+        except AttributeError:
+            self.request_id = None
+        else:
+            if hasattr(self.meth, 'im_class'):
+                name = '%s.%s' % (self.meth.im_class.__name__,
+                                  self.meth.__name__)
+            else:
+                name = self.meth.__name__
+            self.tracer = Tracer('tpool: %s' % name)
+            self.tracer.begin()
+
+    def teardown(self):
+        if self.request_id != None:
+            self.tracer.end()
+            self.request_id = None
+
+    def pre_meth(self):
+        if self.request_id != None:
+            _native_local.request_id = self.request_id
+
+    def post_meth(self):
+        if self.request_id != None:
+            del _native_local.request_id
+
+tpool.add_execute_hook(RequestIdHook)
+
+def _dict_union(a, b):
+    if a == None and b == None:
+        return None
+    elif a == None:
+        return b
+    elif b == None:
+        return a
+    else:
+        r = dict(a)
+        r.update(b)
+        return r
+
+def _trace_path(request_id):
+    return os.path.join(CONF.trace_dir, '%s.trace' % request_id)
+
+def _open_trace_file(request_id, extra_flags=0,):
+    flags = os.O_RDWR | os.O_APPEND | extra_flags
+    return os.fdopen(os.open(_trace_path(request_id), flags, 0666), 'a+')
+
+def _current_request_id():
+    try:
+        return _native_local.request_id
+    except AttributeError:
+        # Might throw AttributeError as well!
+        return local.store.context.request_id
+
+BEGIN = 'B'
+END = 'E'
+METADATA = 'M'
+
+def trace_current_request(args=None):
+    '''Needs to be called right after the thread local context is set.'''
+    # Make sure the file exists and is empty.
+    with _open_trace_file(_current_request_id(), os.O_CREAT | os.O_TRUNC) as f:
+        f.write('[\n')
+    # Hack: use "thread_name" metadata for args ...
+    emit(METADATA, "thread_name", args=args)
+
+def emit(type, name=None, args=None, tags=None):
+    try:
+        request_id = _current_request_id()
+    except AttributeError:
+        # No request id, so we aren't tracing.
+        return
+    else:
+        f = None
+        try:
+            f = _open_trace_file(request_id)
+        except OSError, e:
+            # If the trace file doesn't exist, then nobody called
+            # trace_current_request.
+            if e.errno != errno.ENOENT:
+                raise
+        else:
+            categories = [os.path.basename(sys.argv[0])]
+            if tags != None:
+                categories.extend(tags)
+            event = {'ph': type,
+                     'ts': time.time() * 1e6,
+                     'cat': ','.join(categories),
+                     'pid': '%s:%s' % (request_id, os.getpid()),
+                     'tid': str(thread.get_ident())}
+            if args != None:
+                event['args'] = args
+            if name != None:
+                event['name'] = name
+            json.dump(event, f, sort_keys=True, indent=4)
+            f.write(',\n')
+        finally:
+            if f != None:
+                f.close()
+
+class Tracer(object):
+    def __init__(self, name, begin_args=None, end_args=None):
+        self.begin_args = begin_args
+        self.end_args = end_args
+        self.name = name
+        self.ended = False
+
+    def __enter__(self):
+        self.begin()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.end()
+
+    def begin(self, args=None):
+        emit(BEGIN, self.name, _dict_union(self.begin_args, args))
+
+    def end(self, args=None):
+        if not self.ended:
+            emit(END, self.name, _dict_union(self.end_args, args))
+            self.ended = True
+
+def traced(begin_args=None, end_args=None, begin_cb=None,
+           end_cb=None, name_cb=None):
+    if begin_cb == None:
+        begin_cb = lambda fn, args, kwargs: None
+
+    if end_cb == None:
+        end_cb = lambda fn, ret, args, kwargs: None
+
+    if name_cb == None:
+        name_cb = lambda dflt, fn, args, kwargs: dflt
+
+    def decorator(fn_or_cls):
+        if isinstance(fn_or_cls, (types.TypeType, types.ClassType)):
+            return class_decorator(fn_or_cls)
+        else:
+            return function_decorator(fn_or_cls)
+
+    def class_decorator(cls):
+        for name, method in inspect.getmembers(cls, inspect.ismethod):
+            setattr(cls, name, function_decorator(method))
+        return cls
+
+    def function_decorator(fn):
+        begin_args_ = _dict_union({'Module': fn.__module__}, begin_args)
+
+        if hasattr(fn, 'im_class'):
+            default_name = '%s.%s' % (fn.im_class.__name__, fn.__name__)
+        else:
+            default_name = fn.__name__
+
+        def wrapper(*args, **kwargs):
+            tracer = Tracer(name_cb(default_name, fn, args, kwargs),
+                            _dict_union(begin_args_, end_args))
+            tracer.begin(begin_cb(fn, args, kwargs))
+            r = None
+            try:
+                r = fn(*args, **kwargs)
+            finally:
+                tracer.end(end_cb(fn, r, args, kwargs))
+            return r
+        
+        wrapper.__name__ = fn.__name__
+        return wrapper
+
+    return decorator

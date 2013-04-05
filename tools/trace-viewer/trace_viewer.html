@@ -1,0 +1,86 @@
+<!DOCTYPE HTML>
+<html>
+<!--
+Copyright (c) 2011 The Chromium Authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+<head i18n-values="dir:textdirection;">
+<title>Simple Embedded Viewer</title>
+<link type="text/css" rel="stylesheet" href="trace_viewer.css">
+<script type="text/javascript" src="jquery-1.9.1.min.js"></script>
+<script src="trace_viewer.js"></script>
+<style>
+  .view {
+    overflow: hidden;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+  }
+
+</style>
+</head>
+<body>
+  <div class="view">
+  </div>
+  <script>
+  'use strict';
+
+  function queryObj() {
+      var result = {}, keyValuePairs = location.search.slice(1).split('&');
+  
+      keyValuePairs.forEach(function(keyValuePair) {
+          keyValuePair = keyValuePair.split('=');
+          result[keyValuePair[0]] = keyValuePair[1] || '';
+      });
+  
+      return result;
+  }
+
+  var timelineViewEl;
+
+  function loadTraces(filenames, callback) {
+    var traces = [];
+    for (var i = 0; i < filenames.length; i++) {
+      traces.push(undefined);
+    }
+    var numTracesPending = filenames.length;
+
+    filenames.forEach(function(filename, i) {
+      $.ajax(filename)
+      .done(function(data, status, xhr) {
+        traces[i] = data;
+        numTracesPending--;
+        if (numTracesPending == 0)
+          callback(traces);
+      });
+    });
+  }
+
+  function createViewFromTraces(traces) {
+    var m = new tracing.Model();
+    m.importTraces(traces, true);
+
+    timelineViewEl = document.querySelector('.view');
+    tracing.ui.decorate(timelineViewEl, tracing.TimelineView);
+    timelineViewEl.model = m;
+    timelineViewEl.tabIndex = 1;
+    timelineViewEl.timeline.focusElement = timelineViewEl;
+  }
+
+  function onLoad() {
+    var paths = queryObj()['paths'];
+    if (paths == undefined) {
+        document.write('missing ?paths=path1,...,pathN in URL');
+    } else if (paths != '') {
+        loadTraces(paths.split(','),
+                   createViewFromTraces);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', onLoad);
+  </script>
+</body>
+</html>
