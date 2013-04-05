@@ -51,6 +51,7 @@ from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 from nova.openstack.common.rpc import common as rpc_common
 from nova.openstack.common import timeutils
+from nova.openstack.common import trace
 
 notify_decorator = 'nova.openstack.common.notifier.api.notify_decorator'
 
@@ -154,7 +155,11 @@ def _subprocess_setup():
     # non-Python subprocesses expect.
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
+def _execute_begin_cb(fn, args, kwargs):
+    return {'Command': ' '.join(args)[0:50]}
 
+@trace.traced(begin_cb=lambda fn, args, kwargs: {'Command': ' '.join(args[1:])},
+              name_cb=lambda dflt, fn, args, kwargs: 'exec %s' % args[0])
 def execute(*cmd, **kwargs):
     """Helper method to execute command with optional retry.
 

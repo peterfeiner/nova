@@ -64,6 +64,7 @@ from nova.openstack.common import excutils
 from nova.openstack.common import jsonutils
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
 from nova.openstack.common.notifier import api as notifier
 from nova.openstack.common import rpc
 from nova.openstack.common.rpc import common as rpc_common
@@ -320,7 +321,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
         return self._compute.conductor_api.instance_type_get(context,
                                                              instance_type_id)
 
-
+@trace.traced()
 class ComputeManager(manager.SchedulerDependentManager):
     """Manages the running instances from creation to destruction."""
 
