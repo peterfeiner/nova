@@ -957,7 +957,7 @@ def kill_dhcp(dev):
         out, _err = _execute('cat', '/proc/%d/cmdline' % pid,
                              check_exit_code=False)
         if conffile.split('/')[-1] in out:
-            _execute('kill', '-9', pid, run_as_root=True)
+            _execute('kill', '-9', str(pid), run_as_root=True)
         else:
             LOG.debug(_('Pid %d is stale, skip killing dnsmasq'), pid)
     _remove_dnsmasq_accept_rules(dev)
@@ -1000,7 +1000,7 @@ def restart_dhcp(context, dev, network_ref):
         # of the file itself
         if conffile.split('/')[-1] in out:
             try:
-                _execute('kill', '-HUP', pid, run_as_root=True)
+                _execute('kill', '-HUP', str(pid), run_as_root=True)
                 _add_dnsmasq_accept_rules(dev)
                 return
             except Exception as exc:  # pylint: disable=W0703
