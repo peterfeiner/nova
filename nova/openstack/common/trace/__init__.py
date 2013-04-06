@@ -162,15 +162,27 @@ def traced(begin_args=None, end_args=None, begin_cb=None,
     if name_cb == None:
         name_cb = lambda dflt, fn, args, kwargs: dflt
 
-    def decorator(fn_or_cls):
-        if isinstance(fn_or_cls, (types.TypeType, types.ClassType)):
-            return class_decorator(fn_or_cls)
+    def decorator(o):
+        if isinstance(o, (types.TypeType, types.ClassType)):
+            return class_decorator(o)
+        elif isinstance(o, types.ModuleType):
+            return module_decorator(o)
+        elif isinstance(o, (types.FunctionType, types.MethodType)):
+            return function_decorator(o)
         else:
-            return function_decorator(fn_or_cls)
+            return o
+
 
     def class_decorator(cls):
         for name, method in inspect.getmembers(cls, inspect.ismethod):
-            setattr(cls, name, function_decorator(method))
+            # If method is defined in cls and it's decorated with @classmethod,
+            # then we want to wrap the pre-decorated method then apply
+            # @classmethod again.
+            if name in cls.__dict__ and isinstance(cls.__dict__[name], classmethod):
+                setattr(cls, name,
+                        classmethod(function_decorator(method.__func__)))
+            else:
+                setattr(cls, name, function_decorator(method))
         return cls
 
     def function_decorator(fn):

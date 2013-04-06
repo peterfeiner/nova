@@ -26,6 +26,7 @@ from nova.network import linux_net
 from nova.openstack.common import importutils
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
 from nova.virt import netutils
 
 LOG = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ class FirewallDriver(object):
             return network_info
 
 
+@trace.traced()
 class IptablesFirewallDriver(FirewallDriver):
     """Driver which enforces security groups through iptables rules."""
 

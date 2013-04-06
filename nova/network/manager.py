@@ -69,6 +69,7 @@ from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
 from nova.openstack.common import uuidutils
+from nova.openstack.common import trace
 from nova import quota
 from nova import servicegroup
 from nova import utils
@@ -254,7 +255,7 @@ class RPCAllocateFixedIP(object):
 
         self.network_rpcapi.deallocate_fixed_ip(context, address, host)
 
-
+@trace.traced()
 class NetworkManager(manager.Manager):
     """Implements common network manager functionality.
 
@@ -1422,6 +1423,7 @@ class NetworkManager(manager.Manager):
         raise NotImplementedError()
 
 
+@trace.traced()
 class FlatManager(NetworkManager):
     """Basic network where no vlans are used.
 
@@ -1646,6 +1648,7 @@ class FlatDHCPManager(RPCAllocateFixedIP, floating_ips.FloatingIP,
         return network_dict
 
 
+@trace.traced()
 class VlanManager(RPCAllocateFixedIP, floating_ips.FloatingIP, NetworkManager):
     """Vlan network with dhcp.
 

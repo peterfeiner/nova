@@ -41,7 +41,7 @@ from oslo.config import cfg
 
 from nova.openstack.common import lockutils
 from nova.openstack.common import importutils
-
+from nova.openstack.common import trace
 
 db_opts = [
     cfg.StrOpt('db_backend',
@@ -55,7 +55,6 @@ db_opts = [
 
 CONF = cfg.CONF
 CONF.register_opts(db_opts)
-
 
 class DBAPI(object):
     def __init__(self, backend_mapping=None):
@@ -90,7 +89,8 @@ class DBAPI(object):
 
     def __getattr__(self, key):
         backend = self.__backend or self.__get_backend()
-        attr = getattr(backend, key)
+        name_cb = lambda dflt, fn, args, kwargs: 'db %s' % dflt
+        attr = trace.traced(name_cb=name_cb)(getattr(backend, key))
         if not self.__use_tpool or not hasattr(attr, '__call__'):
             return attr
 

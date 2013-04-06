@@ -105,7 +105,7 @@ class RpcDispatcher(object):
         super(RpcDispatcher, self).__init__()
 
     @trace.traced(
-        name_cb=lambda dflt, fn, args, kwargs:'%s %s' % (dflt, args[3]))
+        name_cb=lambda dflt, fn, args, kwargs:'rpc %s %s' % (dflt, args[3]))
     def dispatch(self, ctxt, version, method, **kwargs):
         """Dispatch a message based on a requested version.
 

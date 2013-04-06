@@ -91,6 +91,7 @@ def require_admin_context(f):
 
     """
 
+    @functools.wraps(f)
     def wrapper(*args, **kwargs):
         nova.context.require_admin_context(args[0])
         return f(*args, **kwargs)
@@ -108,6 +109,7 @@ def require_context(f):
 
     """
 
+    @functools.wraps(f)
     def wrapper(*args, **kwargs):
         nova.context.require_context(args[0])
         return f(*args, **kwargs)
