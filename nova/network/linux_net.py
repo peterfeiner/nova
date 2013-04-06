@@ -36,6 +36,7 @@ from nova.openstack.common import jsonutils
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
+from nova.openstack.common import trace
 from nova import paths
 from nova import utils
 
@@ -1316,6 +1317,7 @@ class LinuxNetInterfaceDriver(object):
 
 
 # plugs interfaces using Linux Bridge
+@trace.traced()
 class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
 
     def plug(self, network, mac_address, gateway=True):
@@ -1649,6 +1651,7 @@ def get_gateway_rules(bridge):
 
 
 # plugs interfaces using Open vSwitch
+@trace.traced()
 class LinuxOVSInterfaceDriver(LinuxNetInterfaceDriver):
 
     def plug(self, network, mac_address, gateway=True):
@@ -1706,6 +1709,7 @@ class LinuxOVSInterfaceDriver(LinuxNetInterfaceDriver):
 
 
 # plugs interfaces using Linux Bridge when using QuantumManager
+@trace.traced()
 class QuantumLinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
 
     BRIDGE_NAME_PREFIX = 'brq'

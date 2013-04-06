@@ -1038,7 +1038,7 @@ class Resource(wsgi.Application):
                                              'controller': controller,
                                              'action_args': action_args}})
 
-        with trace.Tracer(name):
+        with trace.Tracer('api %s' % name):
             return method(req=request, **action_args)
 
 

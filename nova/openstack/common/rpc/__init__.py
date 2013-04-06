@@ -75,6 +75,19 @@ rpc_opts = [
 CONF = cfg.CONF
 CONF.register_opts(rpc_opts)
 
+def traced_rpc(fn):
+    argspec = inspect.getargspec(fn)
+    topic_index = argspec[0].index('topic')
+    msg_index = argspec[0].index('msg')
+    def name_cb(dflt, fn, args, kwargs):
+        if 'cast' in dflt:
+            prep = 'to'
+        else:
+            prep = 'on'
+        topic = args[topic_index]
+        method = args[msg_index]['method']
+        return 'rpc %s %s %s %s' % (dflt, method, prep, topic)
+    return trace.traced(name_cb=name_cb)(fn)
 
 def set_defaults(control_exchange):
     cfg.set_defaults(rpc_opts,
@@ -114,7 +127,7 @@ def _check_for_lock():
     return False
 
 
-@trace.traced()
+@traced_rpc
 def call(context, topic, msg, timeout=None, check_for_lock=False):
     """Invoke a remote method that returns something.
 
@@ -142,7 +155,7 @@ def call(context, topic, msg, timeout=None, check_for_lock=False):
     return _get_impl().call(CONF, context, topic, msg, timeout)
 
 
-@trace.traced()
+@traced_rpc
 def cast(context, topic, msg):
     """Invoke a remote method that does not return anything.
 
@@ -161,7 +174,7 @@ def cast(context, topic, msg):
     return _get_impl().cast(CONF, context, topic, msg)
 
 
-@trace.traced()
+@traced_rpc
 def fanout_cast(context, topic, msg):
     """Broadcast a remote method invocation with no return.
 
@@ -183,7 +196,7 @@ def fanout_cast(context, topic, msg):
     return _get_impl().fanout_cast(CONF, context, topic, msg)
 
 
-@trace.traced()
+@traced_rpc
 def multicall(context, topic, msg, timeout=None, check_for_lock=False):
     """Invoke a remote method and get back an iterator.
 
@@ -218,7 +231,7 @@ def multicall(context, topic, msg, timeout=None, check_for_lock=False):
     return _get_impl().multicall(CONF, context, topic, msg, timeout)
 
 
-@trace.traced()
+@traced_rpc
 def notify(context, topic, msg, envelope=False):
     """Send notification event.
 
@@ -233,7 +246,6 @@ def notify(context, topic, msg, envelope=False):
     return _get_impl().notify(cfg.CONF, context, topic, msg, envelope)
 
 
-@trace.traced()
 def cleanup():
     """Clean up resoruces in use by implementation.
 
@@ -247,7 +259,7 @@ def cleanup():
     return _get_impl().cleanup()
 
 
-@trace.traced()
+@traced_rpc
 def cast_to_server(context, server_params, topic, msg):
     """Invoke a remote method that does not return anything.
 
@@ -264,7 +276,7 @@ def cast_to_server(context, server_params, topic, msg):
                                       msg)
 
 
-@trace.traced()
+@traced_rpc
 def fanout_cast_to_server(context, server_params, topic, msg):
     """Broadcast to a remote method invocation with no return.
 
@@ -281,7 +293,6 @@ def fanout_cast_to_server(context, server_params, topic, msg):
                                              topic, msg)
 
 
-@trace.traced()
 def queue_get_for(context, topic, host):
     """Get a queue name for a given topic + host.
 
