@@ -57,6 +57,9 @@ class FirewallDriver(object):
         Defines methods that any driver providing security groups
         and provider firewall functionality should implement.
     """
+
+    __metaclass__ = trace.metaclass
+
     def __init__(self, virtapi):
         self._virtapi = virtapi
 
@@ -140,7 +143,6 @@ class FirewallDriver(object):
             return network_info
 
 
-@trace.traced()
 class IptablesFirewallDriver(FirewallDriver):
     """Driver which enforces security groups through iptables rules."""
 

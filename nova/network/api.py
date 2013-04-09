@@ -27,6 +27,7 @@ from nova.network import floating_ips
 from nova.network import model as network_model
 from nova.network import rpcapi as network_rpcapi
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
 from nova import policy
 from nova import utils
 
@@ -62,6 +63,7 @@ def refresh_cache(f):
     return wrapper
 
 
+@trace.traced()
 def update_instance_cache_with_nw_info(api, context, instance,
                                        nw_info=None, conductor_api=None):
     try:
@@ -107,6 +109,8 @@ class API(base.Base):
     other services (such as Quantum).
     """
     _sentinel = object()
+
+    __metaclass__ == trace.metaclass
 
     def __init__(self, **kwargs):
         self.network_rpcapi = network_rpcapi.NetworkAPI()

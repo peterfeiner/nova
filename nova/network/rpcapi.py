@@ -22,6 +22,7 @@ from oslo.config import cfg
 
 from nova.openstack.common import jsonutils
 from nova.openstack.common import rpc
+from nova.openstack.common import trace
 from nova.openstack.common.rpc import proxy as rpc_proxy
 
 rpcapi_opts = [
@@ -36,7 +37,6 @@ rpcapi_opts = [
 
 CONF = cfg.CONF
 CONF.register_opts(rpcapi_opts)
-
 
 class NetworkAPI(rpc_proxy.RpcProxy):
     '''Client side of the network rpc API.

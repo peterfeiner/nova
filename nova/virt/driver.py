@@ -28,6 +28,7 @@ from oslo.config import cfg
 
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
 from nova import utils
 from nova.virt import event as virtevent
 
@@ -124,6 +125,8 @@ class ComputeDriver(object):
     virtualization platform.
 
     """
+
+    __metaclass__ = trace.metaclass
 
     capabilities = {
         "has_imagecache": False,

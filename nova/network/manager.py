@@ -256,7 +256,6 @@ class RPCAllocateFixedIP(object):
 
         self.network_rpcapi.deallocate_fixed_ip(context, address, host)
 
-@trace.traced()
 class NetworkManager(manager.Manager):
     """Implements common network manager functionality.
 
@@ -1425,7 +1424,6 @@ class NetworkManager(manager.Manager):
         raise NotImplementedError()
 
 
-@trace.traced()
 class FlatManager(NetworkManager):
     """Basic network where no vlans are used.
 
@@ -1650,7 +1648,6 @@ class FlatDHCPManager(RPCAllocateFixedIP, floating_ips.FloatingIP,
         return network_dict
 
 
-@trace.traced()
 class VlanManager(RPCAllocateFixedIP, floating_ips.FloatingIP, NetworkManager):
     """Vlan network with dhcp.
 

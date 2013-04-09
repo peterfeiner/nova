@@ -23,6 +23,7 @@ For more information about rpc API version numbers, see:
 
 
 from nova.openstack.common import rpc
+from nova.openstack.common import trace
 
 
 class RpcProxy(object):
@@ -33,6 +34,8 @@ class RpcProxy(object):
     be used as a base class for a class that implements the client side of an
     rpc API.
     """
+
+    __metaclass__ = trace.metaclass
 
     def __init__(self, topic, default_version):
         """Initialize an RpcProxy.

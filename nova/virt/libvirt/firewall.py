@@ -22,7 +22,6 @@ from oslo.config import cfg
 
 from nova.cloudpipe import pipelib
 from nova.openstack.common import log as logging
-from nova.openstack.common import trace
 import nova.virt.firewall as base_firewall
 from nova.virt import netutils
 
@@ -33,7 +32,6 @@ CONF.import_opt('use_ipv6', 'nova.netconf')
 libvirt = None
 
 
-@trace.traced()
 class NWFilterFirewall(base_firewall.FirewallDriver):
     """
     This class implements a network filtering mechanism by using
@@ -276,7 +274,6 @@ class NWFilterFirewall(base_firewall.FirewallDriver):
         return True
 
 
-@trace.traced()
 class IptablesFirewallDriver(base_firewall.IptablesFirewallDriver):
     def __init__(self, virtapi, execute=None, **kwargs):
         super(IptablesFirewallDriver, self).__init__(virtapi, **kwargs)

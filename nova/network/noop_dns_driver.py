@@ -18,7 +18,6 @@
 from nova.network import dns_driver
 from nova.openstack.common import trace
 
-@trace.traced()
 class NoopDNSDriver(dns_driver.DNSDriver):
     """No-op DNS manager. Does nothing."""
 

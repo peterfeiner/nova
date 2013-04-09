@@ -1302,6 +1302,7 @@ class LinuxNetInterfaceDriver(object):
     Abstract class that defines generic network host API
     for for all Linux interface drivers.
     """
+    __metaclass__ = trace.metaclass
 
     def plug(self, network, mac_address):
         """Create Linux device, return device name."""
@@ -1317,7 +1318,6 @@ class LinuxNetInterfaceDriver(object):
 
 
 # plugs interfaces using Linux Bridge
-@trace.traced()
 class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
 
     def plug(self, network, mac_address, gateway=True):
@@ -1651,7 +1651,6 @@ def get_gateway_rules(bridge):
 
 
 # plugs interfaces using Open vSwitch
-@trace.traced()
 class LinuxOVSInterfaceDriver(LinuxNetInterfaceDriver):
 
     def plug(self, network, mac_address, gateway=True):
@@ -1709,7 +1708,6 @@ class LinuxOVSInterfaceDriver(LinuxNetInterfaceDriver):
 
 
 # plugs interfaces using Linux Bridge when using QuantumManager
-@trace.traced()
 class QuantumLinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
 
     BRIDGE_NAME_PREFIX = 'brq'

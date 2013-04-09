@@ -140,6 +140,9 @@ def periodic_task(*args, **kwargs):
 
 
 class ManagerMeta(type):
+    def __new__(cls, name, bases, dict_):
+        return trace.metaclass(name, bases, dict_, super(ManagerMeta, cls))
+
     def __init__(cls, names, bases, dict_):
         """Metaclass that allows us to collect decorated periodic tasks."""
         super(ManagerMeta, cls).__init__(names, bases, dict_)

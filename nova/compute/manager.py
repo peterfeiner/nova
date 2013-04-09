@@ -321,7 +321,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
         return self._compute.conductor_api.instance_type_get(context,
                                                              instance_type_id)
 
-@trace.traced()
+
 class ComputeManager(manager.SchedulerDependentManager):
     """Manages the running instances from creation to destruction."""
 
