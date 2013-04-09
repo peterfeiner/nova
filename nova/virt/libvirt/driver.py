@@ -284,7 +284,6 @@ MIN_LIBVIRT_LIVESNAPSHOT_VERSION = (1, 0, 0)
 MIN_QEMU_LIVESNAPSHOT_VERSION = (1, 3, 0)
 
 
-@trace.traced()
 class LibvirtDriver(driver.ComputeDriver):
 
     capabilities = {

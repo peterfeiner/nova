@@ -151,8 +151,25 @@ class Tracer(object):
             emit(END, self.name, _dict_union(self.end_args, args))
             self.ended = True
 
+def metaclass(name, bases, dict_, super_type=type):
+    '''Can be used as a metaclass on its own or called from a metaclass's
+    __new__ method.'''
+    # Wrap all of the functions in our @traced decorator. Take special care
+    # for @classmethod and @staticmethod functions to wrap the functions
+    # that they wrap; they're actually descriptor objects and very tricky!
+    for key, value in dict_:
+        def traced_func(fn):
+            return traced(name='%s.%s' % (name, fn.__name__))(fn)
+        if isinstance(value, types.FunctionType):
+            dict_[key] = traced_func(fn)
+        elif isinstance(value, classmethod):
+            dict_[key] = classmethod(traced_func(value.__func__))
+        elif isinstance(value, staticmethod)
+            dict_[key] = staticmethod(traced_func(value.__func__))
+    return type(name, bases, dict_)
+
 def traced(begin_args=None, end_args=None, begin_cb=None,
-           end_cb=None, name_cb=None):
+           end_cb=None, name_cb=None, name_prefix=None):
     if begin_cb == None:
         begin_cb = lambda fn, args, kwargs: None
 
@@ -172,7 +189,6 @@ def traced(begin_args=None, end_args=None, begin_cb=None,
         else:
             return o
 
-
     def class_decorator(cls):
         for name, method in inspect.getmembers(cls, inspect.ismethod):
             # If method is defined in cls and it's decorated with @classmethod,
@@ -188,7 +204,9 @@ def traced(begin_args=None, end_args=None, begin_cb=None,
     def function_decorator(fn):
         begin_args_ = _dict_union({'Module': fn.__module__}, begin_args)
 
-        if hasattr(fn, 'im_class'):
+        if name != None:
+            default_name = name
+        elif hasattr(fn, 'im_class'):
             default_name = '%s.%s' % (fn.im_class.__name__, fn.__name__)
         else:
             default_name = fn.__name__

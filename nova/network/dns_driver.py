@@ -12,9 +12,12 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from nova.openstack.common import trace
 
 class DNSDriver(object):
     """Defines the DNS manager interface.  Does nothing."""
+
+    __metaclass__ = trace.metaclass
 
     def __init__(self):
         pass
