@@ -28,6 +28,7 @@ from nova import exception
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import trace
+from nova.openstack.common import local
 from nova import wsgi
 
 
@@ -1024,14 +1025,15 @@ class Resource(wsgi.Application):
         controller = method.__module__.split('.')[-1]
         name = '%s/%s' % (controller, action)
 
-        trace.trace_current_request({'name': name,
-                                     'type': 'api',
-                                     'api': {'action': action,
-                                             'controller': controller,
-                                             'action_args': action_args}})
+        trace_args = {'name': name,
+                      'type': 'api',
+                      'api': {'action': action,
+                              'controller': controller,
+                              'action_args': action_args}}
 
-        with trace.Tracer('api %s' % name):
-            return method(req=request, **action_args)
+        with trace.trace(local.store.context.request_id, trace_args):
+            with trace.Tracer('api %s' % name):
+                return method(req=request, **action_args)
 
 
 def action(name):

@@ -144,7 +144,8 @@ function refresh_nav()
             var trace = data[i];
 
             if (trace.args.type == 'api' && 
-                $.inArray(trace.args.api.action, ['detail', 'show']) != -1)
+                ($.inArray(trace.args.api.action, ['detail', 'show']) != -1 ||
+                 trace.args.api.action == 'index'))
                 continue;
 
             traces.push(trace);
@@ -179,12 +180,14 @@ function refresh_nav()
             }
             duration_label.text(duration + duration_units);
 
-            var desc = trace.args.api.controller + '/' + trace.args.api.action;
-            if (trace.args.api.controller = 'servers' &&
-                trace.args.api.action == 'create') {
-                trace.args.api.action_args.body.server.name;
+            if (trace.args.type == 'api') {
+                var desc = trace.args.api.controller + '/' + trace.args.api.action;
+                if (trace.args.api.controller == 'servers' &&
+                    trace.args.api.action == 'create') {
+                    trace.args.api.action_args.body.server.name;
+                }
+                desc_label.text(desc);
             }
-            desc_label.text(desc);
 
             req_label.text(trace.req);
 

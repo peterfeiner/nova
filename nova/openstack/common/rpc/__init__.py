@@ -79,15 +79,22 @@ def traced_rpc(fn):
     argspec = inspect.getargspec(fn)
     topic_index = argspec[0].index('topic')
     msg_index = argspec[0].index('msg')
-    def name_cb(dflt, fn, args, kwargs):
-        if 'cast' in dflt:
+
+    def wrapper(*args, **kwargs):
+        if 'cast' in fn.__name__:
             prep = 'to'
         else:
             prep = 'on'
         topic = args[topic_index]
         method = args[msg_index]['method']
-        return 'rpc %s %s %s %s' % (dflt, method, prep, topic)
-    return trace.traced(name_cb=name_cb)(fn)
+        name = 'rpc %s %s %s %s' % (fn.__name__, method, prep, topic)
+
+        args[msg_index]['args']['trace_id'] = trace.current_trace_id()
+
+        with trace.Tracer(name):
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 def set_defaults(control_exchange):
     cfg.set_defaults(rpc_opts,

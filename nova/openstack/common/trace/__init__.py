@@ -7,10 +7,10 @@ import thread
 import time
 import types
 import errno
+import httplib2
+import contextlib
 
-from eventlet import patcher, tpool
-
-from nova.openstack.common import local
+from eventlet import patcher, tpool, corolocal
 
 from oslo.config import cfg
 
@@ -24,13 +24,14 @@ CONF.register_cli_opts(trace_opts)
 _native_threading = patcher.original('threading')
 
 _native_local = _native_threading.local()
+_eventlet_local = corolocal.local()
 
 class RequestIdHook(tpool.ExecuteHook):
     request_id = None
 
     def setup(self):
         try:
-            self.request_id = local.store.context.request_id
+            self.request_id = _eventlet_local.request_id
         except AttributeError:
             self.request_id = None
         else:
@@ -76,24 +77,56 @@ def _open_trace_file(request_id, extra_flags=0,):
     flags = os.O_RDWR | os.O_APPEND | extra_flags
     return os.fdopen(os.open(_trace_path(request_id), flags, 0666), 'a+')
 
+def current_trace_id():
+    try:
+        return _current_request_id()
+    except AttributeError:
+        return None
+
 def _current_request_id():
     try:
         return _native_local.request_id
     except AttributeError:
         # Might throw AttributeError as well!
-        return local.store.context.request_id
+        return _eventlet_local.request_id
+
+def _traced_http_request(fn):
+    def wrapper(*args, **kwargs):
+        try:
+            request_id = _current_request_id()
+        except AttributeError:
+            pass
+        else:
+            if 'headers' not in kwargs:
+                kwargs['headers'] = {}
+            kwargs['headers']['X-Trace-Id'] = request_id
+        with Tracer(args[1], begin_args={'Method': kwargs.get('method', 'GET')}):
+            return fn(*args, **kwargs)
+    return wrapper
+
+httplib2.Http.request = _traced_http_request(httplib2.Http.request)
 
 BEGIN = 'B'
 END = 'E'
 METADATA = 'M'
 
-def trace_current_request(args=None):
-    '''Needs to be called right after the thread local context is set.'''
-    # Make sure the file exists and is empty.
-    with _open_trace_file(_current_request_id(), os.O_CREAT | os.O_TRUNC) as f:
-        f.write('[\n')
-    # Hack: use "thread_name" metadata for args ...
-    emit(METADATA, "thread_name", args=args)
+@contextlib.contextmanager
+def trace(request_id, args=None, resume=False):
+    if not resume:
+        # Make sure the file exists and is empty.
+        with _open_trace_file(request_id, os.O_CREAT | os.O_TRUNC) as f:
+            if not resume:
+                f.write('[\n')
+
+    assert not hasattr(_eventlet_local, 'requset_id')
+    _eventlet_local.request_id = request_id
+    try:
+        # Hack: use "thread_name" metadata for args ...
+        emit(METADATA, "thread_name",
+             args=_dict_union({'name': 'no name'}, args))
+        yield
+    finally:
+        del _eventlet_local.request_id
 
 def emit(type, name=None, args=None, tags=None):
     try:

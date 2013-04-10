@@ -33,6 +33,7 @@ from nova.network.security_group import openstack_driver
 from nova.openstack.common import excutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import uuidutils
+from nova.openstack.common import trace
 
 quantum_opts = [
     cfg.StrOpt('quantum_url',
@@ -88,6 +89,8 @@ class API(base.Base):
 
     conductor_api = conductor.API()
     security_group_api = openstack_driver.get_openstack_security_group_driver()
+
+    __metaclass__ = trace.metaclass
 
     def __init__(self):
         super(API, self).__init__()
