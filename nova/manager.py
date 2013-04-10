@@ -63,6 +63,7 @@ from nova import exception
 from nova.openstack.common import log as logging
 from nova.openstack.common.plugin import pluginmanager
 from nova.openstack.common.rpc import dispatcher as rpc_dispatcher
+from nova.openstack.common import trace
 from nova.scheduler import rpcapi as scheduler_rpcapi
 
 
@@ -137,10 +138,10 @@ def periodic_task(*args, **kwargs):
     else:
         return decorator(args[0])
 
-
 class ManagerMeta(type):
-    def __new__(cls, name, bases, dict_):
-        return trace.metaclass(name, bases, dict_, super(ManagerMeta, cls))
+    def __new__(mcs, name, bases, dict_):
+        trace.trace_class_dict(name, dict_)
+        return super(ManagerMeta, mcs).__new__(mcs, name, bases, dict_)
 
     def __init__(cls, names, bases, dict_):
         """Metaclass that allows us to collect decorated periodic tasks."""

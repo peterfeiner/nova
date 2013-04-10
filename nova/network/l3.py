@@ -17,6 +17,7 @@
 
 from nova.network import linux_net
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
 from nova import utils
 
 LOG = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ LOG = logging.getLogger(__name__)
 
 class L3Driver(object):
     """Abstract class that defines a generic L3 API."""
+
+    __metaclass__ = trace.metaclass
 
     def __init__(self, l3_lib=None):
         raise NotImplementedError()

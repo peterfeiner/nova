@@ -151,25 +151,30 @@ class Tracer(object):
             emit(END, self.name, _dict_union(self.end_args, args))
             self.ended = True
 
-def metaclass(name, bases, dict_, super_type=type):
-    '''Can be used as a metaclass on its own or called from a metaclass's
-    __new__ method.'''
+def trace_class_dict(class_name, class_dict):
+    '''Call from a metaclass's __new__ method.'''
     # Wrap all of the functions in our @traced decorator. Take special care
     # for @classmethod and @staticmethod functions to wrap the functions
     # that they wrap; they're actually descriptor objects and very tricky!
-    for key, value in dict_:
+    for key, value in class_dict.items():
         def traced_func(fn):
-            return traced(name='%s.%s' % (name, fn.__name__))(fn)
+            return traced(name='%s.%s' % (class_name, fn.__name__))(fn)
         if isinstance(value, types.FunctionType):
-            dict_[key] = traced_func(fn)
+            class_dict[key] = traced_func(value)
         elif isinstance(value, classmethod):
-            dict_[key] = classmethod(traced_func(value.__func__))
-        elif isinstance(value, staticmethod)
-            dict_[key] = staticmethod(traced_func(value.__func__))
-    return type(name, bases, dict_)
+            class_dict[key] = classmethod(traced_func(value.__func__))
+        elif isinstance(value, staticmethod):
+            class_dict[key] = staticmethod(traced_func(value.__func__))
+
+class TracedMetaClass(type):
+    def __new__(mcs, name, bases, dict_):
+        trace_class_dict(name, dict_)
+        return super(TracedMetaClass, mcs).__new__(mcs, name, bases, dict_)
+
+metaclass = TracedMetaClass
 
 def traced(begin_args=None, end_args=None, begin_cb=None,
-           end_cb=None, name_cb=None, name_prefix=None):
+           end_cb=None, name_cb=None, name=None):
     if begin_cb == None:
         begin_cb = lambda fn, args, kwargs: None
 

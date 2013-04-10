@@ -594,6 +594,7 @@ def write_to_file(file, data, mode='w'):
         f.write(data)
 
 
+@trace.traced()
 def metadata_forward():
     """Create forwarding rule for metadata."""
     if CONF.metadata_host != '127.0.0.1':
@@ -612,6 +613,7 @@ def metadata_forward():
     iptables_manager.apply()
 
 
+@trace.traced()
 def metadata_accept():
     """Create the filter accept rule for metadata."""
     iptables_manager.ipv4['filter'].add_rule('INPUT',
@@ -623,6 +625,7 @@ def metadata_accept():
     iptables_manager.apply()
 
 
+@trace.traced()
 def add_snat_rule(ip_range):
     if CONF.routing_source_ip:
         rule = '-s %s -j SNAT --to-source %s' % (ip_range,
@@ -633,6 +636,7 @@ def add_snat_rule(ip_range):
         iptables_manager.apply()
 
 
+@trace.traced()
 def init_host(ip_range=None):
     """Basic networking setup goes here."""
     # NOTE(devcamcar): Cloud public SNAT entries and the default
@@ -667,6 +671,7 @@ def init_host(ip_range=None):
     iptables_manager.apply()
 
 
+@trace.traced()
 def send_arp_for_ip(ip, device, count):
     out, err = _execute('arping', '-U', ip,
                         '-A', '-I', device,
@@ -677,6 +682,7 @@ def send_arp_for_ip(ip, device, count):
         LOG.debug(_('arping error for ip %s'), ip)
 
 
+@trace.traced()
 def bind_floating_ip(floating_ip, device):
     """Bind ip to public interface."""
     _execute('ip', 'addr', 'add', str(floating_ip) + '/32',
@@ -687,6 +693,7 @@ def bind_floating_ip(floating_ip, device):
         send_arp_for_ip(floating_ip, device, CONF.send_arp_for_ha_count)
 
 
+@trace.traced()
 def unbind_floating_ip(floating_ip, device):
     """Unbind a public ip from public interface."""
     _execute('ip', 'addr', 'del', str(floating_ip) + '/32',
@@ -694,6 +701,7 @@ def unbind_floating_ip(floating_ip, device):
              run_as_root=True, check_exit_code=[0, 2, 254])
 
 
+@trace.traced()
 def ensure_metadata_ip():
     """Sets up local metadata ip."""
     _execute('ip', 'addr', 'add', '169.254.169.254/32',
@@ -701,6 +709,7 @@ def ensure_metadata_ip():
              run_as_root=True, check_exit_code=[0, 2, 254])
 
 
+@trace.traced()
 def ensure_vpn_forward(public_ip, port, private_ip):
     """Sets up forwarding rules for vlan."""
     iptables_manager.ipv4['filter'].add_rule('FORWARD',
@@ -718,6 +727,7 @@ def ensure_vpn_forward(public_ip, port, private_ip):
     iptables_manager.apply()
 
 
+@trace.traced()
 def ensure_floating_forward(floating_ip, fixed_ip, device, network):
     """Ensure floating ip forwarding rule."""
     # NOTE(vish): Make sure we never have duplicate rules for the same ip
@@ -733,6 +743,7 @@ def ensure_floating_forward(floating_ip, fixed_ip, device, network):
         ensure_ebtables_rules(*floating_ebtables_rules(fixed_ip, network))
 
 
+@trace.traced()
 def remove_floating_forward(floating_ip, fixed_ip, device, network):
     """Remove forwarding for floating ip."""
     for chain, rule in floating_forward_rules(floating_ip, fixed_ip, device):
@@ -742,6 +753,7 @@ def remove_floating_forward(floating_ip, fixed_ip, device, network):
         remove_ebtables_rules(*floating_ebtables_rules(fixed_ip, network))
 
 
+@trace.traced()
 def floating_ebtables_rules(fixed_ip, network):
     """Makes sure only in-network traffic is bridged."""
     return (['PREROUTING --logical-in %s -p ipv4 --ip-src %s '
@@ -749,6 +761,7 @@ def floating_ebtables_rules(fixed_ip, network):
             (network['bridge'], fixed_ip, network['cidr'])], 'nat')
 
 
+@trace.traced()
 def floating_forward_rules(floating_ip, fixed_ip, device):
     rules = []
     rule = '-s %s -j SNAT --to %s' % (fixed_ip, floating_ip)
@@ -764,6 +777,7 @@ def floating_forward_rules(floating_ip, fixed_ip, device):
     return rules
 
 
+@trace.traced()
 def initialize_gateway_device(dev, network_ref):
     if not network_ref:
         return
@@ -816,6 +830,7 @@ def initialize_gateway_device(dev, network_ref):
                  'dev', dev, run_as_root=True)
 
 
+@trace.traced()
 def get_dhcp_leases(context, network_ref):
     """Return a network's hosts config in dnsmasq leasefile format."""
     hosts = []
@@ -833,6 +848,7 @@ def get_dhcp_leases(context, network_ref):
     return '\n'.join(hosts)
 
 
+@trace.traced()
 def get_dhcp_hosts(context, network_ref):
     """Get network's hosts config in dhcp-host format."""
     hosts = []
@@ -849,6 +865,7 @@ def get_dhcp_hosts(context, network_ref):
     return '\n'.join(hosts)
 
 
+@trace.traced()
 def get_dns_hosts(context, network_ref):
     """Get network's DNS hosts in hosts format."""
     hosts = []
@@ -858,6 +875,7 @@ def get_dns_hosts(context, network_ref):
     return '\n'.join(hosts)
 
 
+@trace.traced()
 def _add_dnsmasq_accept_rules(dev):
     """Allow DHCP and DNS traffic through to dnsmasq."""
     table = iptables_manager.ipv4['filter']
@@ -870,6 +888,7 @@ def _add_dnsmasq_accept_rules(dev):
     iptables_manager.apply()
 
 
+@trace.traced()
 def _remove_dnsmasq_accept_rules(dev):
     """Remove DHCP and DNS traffic allowed through to dnsmasq."""
     table = iptables_manager.ipv4['filter']
@@ -882,6 +901,7 @@ def _remove_dnsmasq_accept_rules(dev):
     iptables_manager.apply()
 
 
+@trace.traced()
 def _add_dhcp_mangle_rule(dev):
     if not os.path.exists('/dev/vhost-net'):
         return
@@ -892,6 +912,7 @@ def _add_dhcp_mangle_rule(dev):
     iptables_manager.apply()
 
 
+@trace.traced()
 def _remove_dhcp_mangle_rule(dev):
     table = iptables_manager.ipv4['mangle']
     table.remove_rule('POSTROUTING',
@@ -900,6 +921,7 @@ def _remove_dhcp_mangle_rule(dev):
     iptables_manager.apply()
 
 
+@trace.traced()
 def get_dhcp_opts(context, network_ref):
     """Get network's hosts config in dhcp-opts format."""
     hosts = []
@@ -929,27 +951,32 @@ def get_dhcp_opts(context, network_ref):
     return '\n'.join(hosts)
 
 
+@trace.traced()
 def release_dhcp(dev, address, mac_address):
     utils.execute('dhcp_release', dev, address, mac_address, run_as_root=True)
 
 
+@trace.traced()
 def update_dhcp(context, dev, network_ref):
     conffile = _dhcp_file(dev, 'conf')
     write_to_file(conffile, get_dhcp_hosts(context, network_ref))
     restart_dhcp(context, dev, network_ref)
 
 
+@trace.traced()
 def update_dns(context, dev, network_ref):
     hostsfile = _dhcp_file(dev, 'hosts')
     write_to_file(hostsfile, get_dns_hosts(context, network_ref))
     restart_dhcp(context, dev, network_ref)
 
 
+@trace.traced()
 def update_dhcp_hostfile_with_text(dev, hosts_text):
     conffile = _dhcp_file(dev, 'conf')
     write_to_file(conffile, hosts_text)
 
 
+@trace.traced()
 def kill_dhcp(dev):
     pid = _dnsmasq_pid_for(dev)
     if pid:
@@ -968,6 +995,7 @@ def kill_dhcp(dev):
 # NOTE(ja): Sending a HUP only reloads the hostfile, so any
 #           configuration options (like dchp-range, vlan, ...)
 #           aren't reloaded.
+@trace.traced()
 @lockutils.synchronized('dnsmasq_start', 'nova-')
 def restart_dhcp(context, dev, network_ref):
     """(Re)starts a dnsmasq server for a given network.
@@ -1056,6 +1084,7 @@ def restart_dhcp(context, dev, network_ref):
     _add_dnsmasq_accept_rules(dev)
 
 
+@trace.traced()
 @lockutils.synchronized('radvd_start', 'nova-')
 def update_ra(context, dev, network_ref):
     conffile = _ra_file(dev, 'conf')
@@ -1098,6 +1127,7 @@ interface %s
     _execute(*cmd, run_as_root=True)
 
 
+@trace.traced()
 def _host_lease(data):
     """Return a host string for an address in leasefile format."""
     timestamp = timeutils.utcnow()
@@ -1108,10 +1138,12 @@ def _host_lease(data):
                               data['instance_hostname'] or '*')
 
 
+@trace.traced()
 def _host_dhcp_network(data):
     return 'NW-%s' % data['vif_id']
 
 
+@trace.traced()
 def _host_dhcp(data):
     """Return a host string for an address in dhcp-host format."""
     if CONF.use_single_default_gateway:
@@ -1127,12 +1159,14 @@ def _host_dhcp(data):
                                data['address'])
 
 
+@trace.traced()
 def _host_dns(data):
     return '%s\t%s.%s' % (data['address'],
                           data['instance_hostname'],
                           CONF.dhcp_domain)
 
 
+@trace.traced()
 def _host_dhcp_opts(data):
     """Return an empty gateway option."""
     return '%s,%s' % (_host_dhcp_network(data), 3)
@@ -1147,6 +1181,7 @@ def _execute(*cmd, **kwargs):
         return utils.execute(*cmd, **kwargs)
 
 
+@trace.traced()
 def device_exists(device):
     """Check if ethernet device exists."""
     (_out, err) = _execute('ip', 'link', 'show', 'dev', device,
@@ -1203,6 +1238,7 @@ def _ra_pid_for(dev):
             return int(f.read())
 
 
+@trace.traced()
 def _ip_bridge_cmd(action, params, device):
     """Build commands to add/del ips to bridges/devices."""
     cmd = ['ip', 'addr', action]
@@ -1211,6 +1247,7 @@ def _ip_bridge_cmd(action, params, device):
     return cmd
 
 
+@trace.traced()
 def _create_veth_pair(dev1_name, dev2_name):
     """Create a pair of veth devices with the specified names,
     deleting any previous devices with those names.
@@ -1231,6 +1268,7 @@ def _create_veth_pair(dev1_name, dev2_name):
                       run_as_root=True)
 
 
+@trace.traced()
 def create_ovs_vif_port(bridge, dev, iface_id, mac, instance_id):
     utils.execute('ovs-vsctl', '--', '--may-exist', 'add-port',
                   bridge, dev,
@@ -1242,6 +1280,7 @@ def create_ovs_vif_port(bridge, dev, iface_id, mac, instance_id):
                   run_as_root=True)
 
 
+@trace.traced()
 def delete_ovs_vif_port(bridge, dev):
     utils.execute('ovs-vsctl', 'del-port', bridge, dev,
                   run_as_root=True)
@@ -1249,6 +1288,7 @@ def delete_ovs_vif_port(bridge, dev):
                   run_as_root=True)
 
 
+@trace.traced()
 def create_tap_dev(dev, mac_address=None):
     if not device_exists(dev):
         try:
@@ -1281,14 +1321,17 @@ def _get_interface_driver():
     return interface_driver
 
 
+@trace.traced()
 def plug(network, mac_address, gateway=True):
     return _get_interface_driver().plug(network, mac_address, gateway)
 
 
+@trace.traced()
 def unplug(network):
     return _get_interface_driver().unplug(network)
 
 
+@trace.traced()
 def get_dev(network):
     return _get_interface_driver().get_dev(network)
 
@@ -1528,6 +1571,7 @@ class LinuxBridgeInterfaceDriver(LinuxNetInterfaceDriver):
         LOG.debug(_("Unplugged bridge interface '%s'"), bridge)
 
 
+@trace.traced()
 @lockutils.synchronized('ebtables', 'nova-', external=True)
 def ensure_ebtables_rules(rules, table='filter'):
     for rule in rules:
@@ -1537,6 +1581,7 @@ def ensure_ebtables_rules(rules, table='filter'):
         _execute(*cmd, run_as_root=True)
 
 
+@trace.traced()
 @lockutils.synchronized('ebtables', 'nova-', external=True)
 def remove_ebtables_rules(rules, table='filter'):
     for rule in rules:
@@ -1544,6 +1589,7 @@ def remove_ebtables_rules(rules, table='filter'):
         _execute(*cmd, check_exit_code=False, run_as_root=True)
 
 
+@trace.traced()
 def isolate_dhcp_address(interface, address):
     # block arp traffic to address across the interface
     rules = []
@@ -1570,6 +1616,7 @@ def isolate_dhcp_address(interface, address):
                          % (interface, address), top=True)
 
 
+@trace.traced()
 def remove_isolate_dhcp_address(interface, address):
     # block arp traffic to address across the interface
     rules = []
@@ -1596,6 +1643,7 @@ def remove_isolate_dhcp_address(interface, address):
                          % (interface, address), top=True)
 
 
+@trace.traced()
 def get_gateway_rules(bridge):
     interfaces = CONF.forward_bridge_interface
     if 'all' in interfaces:
