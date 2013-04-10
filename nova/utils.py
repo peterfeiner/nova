@@ -159,7 +159,7 @@ def _subprocess_setup():
 def _execute_begin_cb(fn, args, kwargs):
     return {'Command': ' '.join(args)[0:50]}
 
-@trace.traced(begin_cb=lambda fn, args, kwargs: {'Command': ' '.join(args[1:])},
+@trace.traced(begin_cb=lambda fn, args, kwargs: {'Command': ' '.join(map(str, args[1:]))},
               name_cb=lambda dflt, fn, args, kwargs: 'exec %s' % args[0])
 def execute(*cmd, **kwargs):
     """Helper method to execute command with optional retry.

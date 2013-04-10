@@ -110,7 +110,7 @@ class API(base.Base):
     """
     _sentinel = object()
 
-    __metaclass__ == trace.metaclass
+    __metaclass__ = trace.metaclass
 
     def __init__(self, **kwargs):
         self.network_rpcapi = network_rpcapi.NetworkAPI()
