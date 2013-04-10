@@ -83,9 +83,8 @@ On the client side, the same changes should be made as in example 1.  The
 minimum version that supports the new parameter should be specified.
 """
 
-from nova.openstack.common import trace
+from nova.openstack.common import local, trace
 from nova.openstack.common.rpc import common as rpc_common
-
 
 class RpcDispatcher(object):
     """Dispatch rpc messages according to the requested API version.
@@ -104,9 +103,18 @@ class RpcDispatcher(object):
         self.callbacks = callbacks
         super(RpcDispatcher, self).__init__()
 
+    def dispatch(self, ctxt, version, method, **kwargs):
+        try:
+            trace_id = kwargs.pop('trace_id')
+        except KeyError:
+            return self.__dispatch(ctxt, version, method, **kwargs)
+        else:
+            with trace.trace(trace_id, resume=True):
+                return self.__dispatch(ctxt, version, method, **kwargs)
+
     @trace.traced(
         name_cb=lambda dflt, fn, args, kwargs:'rpc %s %s' % (dflt, args[3]))
-    def dispatch(self, ctxt, version, method, **kwargs):
+    def __dispatch(self, ctxt, version, method, **kwargs):
         """Dispatch a message based on a requested version.
 
         :param ctxt: The request context

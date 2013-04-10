@@ -22,6 +22,7 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         self.end_headers()
         traces = []
         for path in glob.glob('traces/*.trace'):
+            print path
             events = json.loads('%s null]' % open(path).read())[0:-1]
             if len(events) == 0:
                 continue
