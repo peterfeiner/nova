@@ -32,6 +32,8 @@ from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
+import traceback
 
 resource_tracker_opts = [
     cfg.IntOpt('reserved_host_disk_mb', default=0,
@@ -40,7 +42,8 @@ resource_tracker_opts = [
                help='Amount of memory in MB to reserve for the host'),
     cfg.StrOpt('compute_stats_class',
                default='nova.compute.stats.Stats',
-               help='Class that will manage stats for the local compute host')
+               help='Class that will manage stats for the local compute host'),
+    cfg.BoolOpt('opt_update_usage', default=False),
 ]
 
 CONF = cfg.CONF
@@ -54,6 +57,8 @@ class ResourceTracker(object):
     """Compute helper class for keeping track of resource usage as instances
     are built and destroyed.
     """
+
+    __metaclass__ = trace.metaclass
 
     def __init__(self, host, driver, nodename):
         self.host = host
@@ -213,11 +218,19 @@ class ResourceTracker(object):
         if self.disabled:
             return
 
+        is_deleted_instance = instance['vm_state'] == vm_states.DELETED
+
         uuid = instance['uuid']
 
         # don't update usage for this instance unless it submitted a resource
-        # claim first:
-        if uuid in self.tracked_instances:
+        # claim first and it's being deleted. No stats will go out of sync
+        # because self._update_usage_from_instance only modifies anything when
+        # an instance is created or deleted (except for self.stats, but the only
+        # important stats in there, ie those that affect claims, are
+        # num_vcpus_used and num_instances, which only change when an instance
+        # is created or deleted).
+        if uuid in self.tracked_instances and \
+           (is_deleted_instance or not CONF.opt_update_usage):
             self._update_usage_from_instance(self.compute_node, instance)
             self._update(context.elevated(), self.compute_node)
 

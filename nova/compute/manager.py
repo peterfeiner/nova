@@ -1097,17 +1097,20 @@ class ComputeManager(manager.SchedulerDependentManager):
                 vm_state=vm_states.BUILDING,
                 task_state=task_states.SPAWNING,
                 expected_task_state=task_states.BLOCK_DEVICE_MAPPING)
+        current_power_state = None
         try:
-            self.driver.spawn(context, instance, image_meta,
-                              injected_files, admin_password,
-                              self._legacy_nw_info(network_info),
-                              block_device_info)
+            current_power_state = self.driver.spawn(context, instance, image_meta,
+                                                    injected_files, admin_password,
+                                                    self._legacy_nw_info(network_info),
+                                                    block_device_info)
 
         except Exception:
             with excutils.save_and_reraise_exception():
                 LOG.exception(_('Instance failed to spawn'), instance=instance)
 
-        current_power_state = self._get_power_state(context, instance)
+        # driver.spawn can optionally return a power state.
+        if current_power_state == None:
+            current_power_state = self._get_power_state(context, instance)
 
         update_data = dict(power_state=current_power_state,
                            vm_state=vm_states.ACTIVE,

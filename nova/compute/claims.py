@@ -20,6 +20,7 @@ Claim objects for use with resource tracking.
 from nova.openstack.common import jsonutils
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
+from nova.openstack.common import trace
 
 LOG = logging.getLogger(__name__)
 COMPUTE_RESOURCE_SEMAPHORE = "compute_resources"
@@ -27,6 +28,8 @@ COMPUTE_RESOURCE_SEMAPHORE = "compute_resources"
 
 class NopClaim(object):
     """For use with compute drivers that do not support resource tracking."""
+
+    __metaclass__ = trace.metaclass
 
     def __init__(self, migration=None):
         self.migration = migration

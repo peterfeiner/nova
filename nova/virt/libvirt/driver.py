@@ -211,7 +211,9 @@ libvirt_opts = [
                  help='Specific cachemodes to use for different disk types '
                       'e.g: ["file=directsync","block=none"]'),
     cfg.BoolOpt('opt_hypervisor_hostname', default=False,
-                help='Enable hypervisor_hostname optimizations')
+                help='Enable hypervisor_hostname optimizations'),
+    cfg.BoolOpt('opt_spawn_power_state', default=False,
+                help='Enable spawn power state optimizations')
     ]
 
 CONF = cfg.CONF
@@ -1536,6 +1538,12 @@ class LibvirtDriver(driver.ComputeDriver):
                                         block_device_info)
         LOG.debug(_("Instance is running"), instance=instance)
 
+        if CONF.opt_spawn_power_state and CONF.libvirt_type in ['kvm', 'qemu']:
+            # There's no point in asking libvirt for the instance's state
+            # because we know that it was RUNNING because createDomainWithFlags
+            # returned successfully.
+            return power_state.RUNNING
+
         def _wait_for_boot():
             """Called at an interval until the VM is running."""
             state = self.get_info(instance)['state']
@@ -1545,8 +1553,11 @@ class LibvirtDriver(driver.ComputeDriver):
                          instance=instance)
                 raise utils.LoopingCallDone()
 
-        timer = utils.FixedIntervalLoopingCall(_wait_for_boot)
-        timer.start(interval=0.5).wait()
+        @trace.traced()
+        def spin_wait_for_boot():
+            timer = utils.FixedIntervalLoopingCall(_wait_for_boot)
+            timer.start(interval=0.5).wait()
+        spin_wait_for_boot()
 
     def _flush_libvirt_console(self, pty):
         out, err = utils.execute('dd',

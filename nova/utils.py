@@ -589,6 +589,11 @@ class FixedIntervalLoopingCall(LoopingCallBase):
     def start(self, interval, initial_delay=None):
         self._running = True
         done = event.Event()
+        trace_id = trace.current_trace_id()
+
+        def _traced_inner():
+            with trace.trace(trace_id, resume=True):
+                return _inner()
 
         def _inner():
             if initial_delay:
@@ -612,7 +617,7 @@ class FixedIntervalLoopingCall(LoopingCallBase):
 
         self.done = done
 
-        greenthread.spawn(_inner)
+        greenthread.spawn(_traced_inner)
         return self.done
 
 
