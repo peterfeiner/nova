@@ -44,6 +44,7 @@
         padding-right: 5px;
         border-right: 1px solid black;
         position: absolute;
+        overflow: auto;
     }
 
     #nav #error {
@@ -65,10 +66,13 @@
     .trace_start_time {
         float: right;
         margin-left: 1em;
+        font-size: small;
+        color: #888;
     }
 
     .trace_duration {
         float: right;
+        color: #88f;
     }
 
     .trace_duration:after {
@@ -184,7 +188,7 @@ function refresh_nav()
                 var desc = trace.args.api.controller + '/' + trace.args.api.action;
                 if (trace.args.api.controller == 'servers' &&
                     trace.args.api.action == 'create') {
-                    trace.args.api.action_args.body.server.name;
+                    desc += ' ' + trace.args.api.action_args.body.server.name;
                 }
                 desc_label.text(desc);
             }

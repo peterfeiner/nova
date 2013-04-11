@@ -1028,21 +1028,24 @@ class Resource(wsgi.Application):
 
     def dispatch(self, method, request, action_args):
         """Dispatch a call to the action-specific method."""
+        try:
+            request_id = local.store.context.request_id
+        except AttributeError:
+            return method(req=request, **action_args)
+        else:
+            action = method.__name__
+            controller = method.__module__.split('.')[-1]
+            name = '%s/%s' % (controller, action)
 
-        action = method.__name__
-        controller = method.__module__.split('.')[-1]
-        name = '%s/%s' % (controller, action)
+            trace_args = {'name': name,
+                          'type': 'api',
+                          'api': {'action': action,
+                                  'controller': controller,
+                                  'action_args': action_args}}
 
-        trace_args = {'name': name,
-                      'type': 'api',
-                      'api': {'action': action,
-                              'controller': controller,
-                              'action_args': action_args}}
-
-        with trace.trace(local.store.context.request_id, trace_args):
-            with trace.Tracer('api %s' % name):
-                return method(req=request, **action_args)
-
+            with trace.trace(request_id, trace_args):
+                with trace.Tracer('api %s' % name):
+                    return method(req=request, **action_args)
 
 def action(name):
     """Mark a function as an action.
