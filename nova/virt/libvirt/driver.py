@@ -210,6 +210,8 @@ libvirt_opts = [
                  default=[],
                  help='Specific cachemodes to use for different disk types '
                       'e.g: ["file=directsync","block=none"]'),
+    cfg.BoolOpt('opt_hypervisor_hostname', default=False,
+                help='Enable hypervisor_hostname optimizations')
     ]
 
 CONF = cfg.CONF
@@ -300,6 +302,7 @@ class LibvirtDriver(driver.ComputeDriver):
             libvirt.virConnect = trace.traced()(libvirt.virConnect)
             libvirt.virDomain = trace.traced()(libvirt.virDomain)
 
+        self._hostname = None
         self._host_state = None
         self._initiator = None
         self._fc_wwnns = None
@@ -572,6 +575,9 @@ class LibvirtDriver(driver.ComputeDriver):
             except Exception, e:
                 LOG.warn(_("URI %s does not support events"),
                          self.uri())
+
+            # Reset cached info from Libvirt.
+            self._hostname = None
 
         return self._wrapped_conn
 
@@ -2660,7 +2666,9 @@ class LibvirtDriver(driver.ComputeDriver):
 
     def get_hypervisor_hostname(self):
         """Returns the hostname of the hypervisor."""
-        return self._conn.getHostname()
+        if self._hostname == None or not CONF.opt_hypervisor_hostname:
+            self._hostname = self._conn.getHostname()
+        return self._hostname
 
     def get_instance_capabilities(self):
         """Get hypervisor instance capabilities
@@ -3403,6 +3411,16 @@ class LibvirtDriver(driver.ComputeDriver):
 
         If 'refresh' is True, run update the stats first."""
         return self.host_state.get_host_stats(refresh=refresh)
+
+    def get_available_nodes(self):
+        if CONF.opt_hypervisor_hostname:
+            # We override ComputeDriver.get_available_nodes to avoid communication
+            # with libvirt. Since self.get_hypervisor_hostname return
+            # self._hostname, which is cached on libvirt connection, we avoid
+            # hitting libvirt in the common case.
+            return [self.get_hypervisor_hostname()]
+        else:
+            return super(LibvirtDriver, self).get_available_nodes()
 
     def get_host_uptime(self, host):
         """Returns the result of calling "uptime"."""
