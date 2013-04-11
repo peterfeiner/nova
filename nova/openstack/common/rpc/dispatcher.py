@@ -83,7 +83,7 @@ On the client side, the same changes should be made as in example 1.  The
 minimum version that supports the new parameter should be specified.
 """
 
-from nova.openstack.common import local, trace
+from nova.openstack.common import trace
 from nova.openstack.common.rpc import common as rpc_common
 
 class RpcDispatcher(object):
