@@ -225,6 +225,8 @@ class ComputeDriver(object):
            :py:meth:`~nova.network.manager.NetworkManager.get_instance_nw_info`
         :param block_device_info: Information about block devices to be
                                   attached to the instance.
+        :returns: The instance's power_state or None. If spawn returns None,
+                  then the caller can get the power state with get_info().
         """
         raise NotImplementedError()
 
