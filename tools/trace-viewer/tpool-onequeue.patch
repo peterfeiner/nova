@@ -1,0 +1,12 @@
+--- /usr/local/lib/python2.7/dist-packages/eventlet/tpool.py	2013-04-11 18:07:44.658175591 -0500
++++ /home/stack/tpool.py	2013-04-11 18:06:45.530176960 -0500
+@@ -303,8 +303,8 @@
+         warnings.warn("Zero threads in tpool.  All tpool.execute calls will\
+             execute in main thread.  Check the value of the environment \
+             variable EVENTLET_THREADPOOL_SIZE.", RuntimeWarning)
++    reqq = Queue(maxsize=-1)
+     for i in xrange(_nthreads):
+-        reqq = Queue(maxsize=-1)
+         t = threading.Thread(target=tworker, 
+                              name="tpool_thread_%s" % i, 
+                              args=(reqq,))
