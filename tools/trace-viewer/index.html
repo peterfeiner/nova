@@ -95,7 +95,7 @@
     }
 
     input {
-        float: left;
+    //    float: left;
     }
 
     #traces label {
@@ -220,6 +220,9 @@ function update_viewer() {
     }
     var url = 'trace_viewer.html?paths=' +
               selected.map(function(trace) { return trace.path }).join(',');
+    if ($('#options')[0].elements.normalize.checked) {
+        url += '&n=1';
+    }
     $('#viewer iframe').attr('src', url);
 }
 
@@ -240,6 +243,9 @@ $(document).ready(init);
     <form id="options">
         <label>
             <input name="sort_by_duration" type="checkbox"/> sort by duration
+        </label>
+        <label>
+            <input name="normalize" type="checkbox"/> normalize
         </label>
     </form>
     <div id="list">

@@ -75,7 +75,13 @@ found in the LICENSE file.
     if (paths == undefined) {
         document.write('missing ?paths=path1,...,pathN in URL');
     } else if (paths != '') {
-        loadTraces(paths.split(','),
+        paths = paths.split(',');
+        if (queryObj()['n'] == '1') {
+            for (var i = 0; i < paths.length; i++) {
+                paths[i] = paths[i] + '?n=1';
+            }
+        }
+        loadTraces(paths,
                    createViewFromTraces);
     }
   }
