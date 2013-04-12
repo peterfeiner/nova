@@ -32,6 +32,15 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
                            'args': events[0].get('args', {}),
                           })
         json.dump(traces, self.wfile)
+    elif self.path.startswith('/traces/') and self.path.endswith('?n=1'):
+        events = json.loads('%s null]' % open(self.path[1:-4]).read())[0:-1]
+        start = events[0]['ts']
+        for event in events:
+            event['ts'] -= start
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        json.dump(events, self.wfile)
     else:
         return SimpleHTTPServer.SimpleHTTPRequestHandler.do_GET(self)
 
