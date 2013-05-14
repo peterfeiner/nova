@@ -128,8 +128,59 @@ else:
     import fcntl
     InterProcessLock = _PosixLock
 
-_semaphores = weakref.WeakValueDictionary()
+class ReadWriteLock(object):
+    '''A fair read-write lock.
 
+    Implementation taken from
+    http://en.wikipedia.org/wiki/Readers-writers_problem.
+    '''
+
+    def __init__(self):
+        self.no_waiting = semaphore.Semaphore(1)
+        self.no_accessing = semaphore.Semaphore(1)
+        self.counter_mutex = semaphore.Semaphore(1)
+        self.nreaders = 0
+
+    def write_lock(self):
+        with self.no_waiting:
+            self.no_accessing.acquire()
+
+    def write_unlock(self):
+        self.no_accessing.release()
+
+    def read_lock(self):
+        with self.no_waiting:
+            with self.counter_mutex:
+                prev = self.nreaders
+                self.nreaders += 1
+            if prev == 0:
+                self.no_accessing.acquire()
+
+    def read_unlock(self):
+        with self.counter_mutex:
+            self.nreaders -= 1
+            current = self.nreaders
+        if current == 0:
+            self.no_accessing.release()
+
+_semaphores = weakref.WeakValueDictionary()
+_rwlocks = weakref.WeakValueDictionary()
+_lock = semaphore.Semaphore()
+
+def _get_named_lock(name, dict_, init):
+    with _lock:
+        try:
+            return dict_[name]
+        except KeyError:
+            lock = init()
+            dict_[name] = lock
+            return lock
+
+def get_named_read_write_lock(name):
+    return _get_named_lock(name, _rwlocks, ReadWriteLock)
+
+def get_named_semaphore(name):
+    return _get_named_lock(name, _semaphores, semaphore.Semaphore)
 
 def synchronized(name, lock_file_prefix, external=False, lock_path=None):
     """Synchronization decorator.
@@ -170,17 +221,7 @@ def synchronized(name, lock_file_prefix, external=False, lock_path=None):
     def wrap(f):
         @functools.wraps(f)
         def inner(*args, **kwargs):
-            # NOTE(soren): If we ever go natively threaded, this will be racy.
-            #              See http://stackoverflow.com/questions/5390569/dyn
-            #              amically-allocating-and-destroying-mutexes
-            sem = _semaphores.get(name, semaphore.Semaphore())
-            if name not in _semaphores:
-                # this check is not racy - we're already holding ref locally
-                # so GC won't remove the item and there was no IO switch
-                # (only valid in greenthreads)
-                _semaphores[name] = sem
-
-            with sem:
+            with get_named_semaphore(name):
                 LOG.debug(_('Got semaphore "%(lock)s" for method '
                             '"%(method)s"...'), {'lock': name,
                                                  'method': f.__name__})

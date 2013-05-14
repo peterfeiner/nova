@@ -21,6 +21,8 @@ model.
 
 from oslo.config import cfg
 
+from eventlet import semaphore, queue, spawn
+
 from nova.compute import claims
 from nova.compute import instance_types
 from nova.compute import task_states
@@ -64,8 +66,10 @@ class ResourceTracker(object):
         self.tracked_instances = {}
         self.tracked_migrations = {}
         self.conductor_api = conductor.API()
+        self.updates = queue.Queue()
+        self.audit_lock = lockutils.ReadWriteLock()
+        spawn(self._update_thread)
 
-    @lockutils.synchronized(COMPUTE_RESOURCE_SEMAPHORE, 'nova-')
     def instance_claim(self, context, instance_ref, limits=None):
         """Indicate that some resources are needed for an upcoming compute
         instance build operation.
@@ -81,39 +85,48 @@ class ResourceTracker(object):
                   be used to revert the resource usage if an error occurs
                   during the instance build.
         """
-        if self.disabled:
-            # compute_driver doesn't support resource tracking, just
-            # set the 'host' and node fields and continue the build:
-            self._set_instance_host_and_node(context, instance_ref)
-            return claims.NopClaim()
+        sem = lockutils.get_named_semaphore(COMPUTE_RESOURCE_SEMAPHORE)
+        released = False
+        sem.acquire()
+        self.audit_lock.read_lock()
+        try:
+            if self.disabled:
+                # compute_driver doesn't support resource tracking, just
+                # set the 'host' and node fields and continue the build:
+                self._set_instance_host_and_node(context, instance_ref)
+                return claims.NopClaim()
 
-        # sanity checks:
-        if instance_ref['host']:
-            LOG.warning(_("Host field should not be set on the instance until "
-                          "resources have been claimed."),
-                          instance=instance_ref)
+            # sanity checks:
+            if instance_ref['host']:
+                LOG.warning(_("Host field should not be set on the instance until "
+                              "resources have been claimed."),
+                              instance=instance_ref)
 
-        if instance_ref['node']:
-            LOG.warning(_("Node field should be not be set on the instance "
-                          "until resources have been claimed."),
-                          instance=instance_ref)
+            if instance_ref['node']:
+                LOG.warning(_("Node field should be not be set on the instance "
+                              "until resources have been claimed."),
+                              instance=instance_ref)
 
-        claim = claims.Claim(instance_ref, self)
+            claim = claims.Claim(instance_ref, self)
 
-        if claim.test(self.compute_node, limits):
+            if claim.test(self.compute_node, limits):
+                # Mark resources in-use and update stats
+                self._update_usage_from_instance(self.compute_node, instance_ref)
 
-            self._set_instance_host_and_node(context, instance_ref)
+                # persist changes to the compute node:
+                self._update(context, self.compute_node, sem=sem)
+                released = True
 
-            # Mark resources in-use and update stats
-            self._update_usage_from_instance(self.compute_node, instance_ref)
+                self._set_instance_host_and_node(context, instance_ref)
 
-            # persist changes to the compute node:
-            self._update(context, self.compute_node)
+                return claim
 
-            return claim
-
-        else:
-            raise exception.ComputeResourcesUnavailable()
+            else:
+                raise exception.ComputeResourcesUnavailable()
+        finally:
+            if not released:
+                sem.release()
+            self.audit_lock.read_unlock()
 
     @lockutils.synchronized(COMPUTE_RESOURCE_SEMAPHORE, 'nova-')
     def resize_claim(self, context, instance_ref, instance_type, limits=None):
@@ -172,8 +185,8 @@ class ResourceTracker(object):
 
     def _set_instance_host_and_node(self, context, instance_ref):
         """Tag the instance as belonging to this host.  This should be done
-        while the COMPUTE_RESOURCES_SEMPAHORE is held so the resource claim
-        will not be lost if the audit process starts.
+        while self.audit_lock is held so the resource claim will not be lost if
+        the audit process starts.
         """
         values = {'host': self.host, 'node': self.nodename,
                   'launched_on': self.host}
@@ -205,26 +218,41 @@ class ResourceTracker(object):
                 ctxt = context.get_admin_context()
                 self._update(ctxt, self.compute_node)
 
-    @lockutils.synchronized(COMPUTE_RESOURCE_SEMAPHORE, 'nova-')
     def update_usage(self, context, instance):
         """Update the resource usage and stats after a change in an
         instance
         """
-        if self.disabled:
-            return
+        sem = lockutils.get_named_semaphore(COMPUTE_RESOURCE_SEMAPHORE)
+        released = False
+        sem.acquire()
+        try:
 
-        uuid = instance['uuid']
+            if self.disabled:
+                return
 
-        # don't update usage for this instance unless it submitted a resource
-        # claim first:
-        if uuid in self.tracked_instances:
-            self._update_usage_from_instance(self.compute_node, instance)
-            self._update(context.elevated(), self.compute_node)
+            uuid = instance['uuid']
+
+            # don't update usage for this instance unless it submitted a resource
+            # claim first
+            if uuid in self.tracked_instances:
+                before = self.compute_node.copy()
+                self._update_usage_from_instance(self.compute_node, instance)
+                LOG.debug(_("before: %s\nafter%s\n") %
+                          (before, self.compute_node))
+                if before != self.compute_node:
+                    self._update(context.elevated(), self.compute_node, sem=sem)
+                    released = True
+                else:
+                    LOG.debug(_("saved an update!"))
+        finally:
+            if not released:
+                sem.release()
 
     @property
     def disabled(self):
         return self.compute_node is None
 
+    # Runs every 60s
     @lockutils.synchronized(COMPUTE_RESOURCE_SEMAPHORE, 'nova-')
     def update_available_resource(self, context):
         """Override in-memory calculations of compute node resource usage based
@@ -234,42 +262,46 @@ class ResourceTracker(object):
         declared a need for resources, but not necessarily retrieved them from
         the hypervisor layer yet.
         """
-        LOG.audit(_("Auditing locally available compute resources"))
-        resources = self.driver.get_available_resource(self.nodename)
+        self.audit_lock.write_lock()
+        try:
+            LOG.audit(_("Auditing locally available compute resources"))
+            resources = self.driver.get_available_resource(self.nodename)
 
-        if not resources:
-            # The virt driver does not support this function
-            LOG.audit(_("Virt driver does not support "
-                 "'get_available_resource'  Compute tracking is disabled."))
-            self.compute_node = None
-            return
+            if not resources:
+                # The virt driver does not support this function
+                LOG.audit(_("Virt driver does not support "
+                     "'get_available_resource'  Compute tracking is disabled."))
+                self.compute_node = None
+                return
 
-        self._verify_resources(resources)
+            self._verify_resources(resources)
 
-        self._report_hypervisor_resource_view(resources)
+            self._report_hypervisor_resource_view(resources)
 
-        # Grab all instances assigned to this node:
-        instances = self.conductor_api.instance_get_all_by_host_and_node(
-            context, self.host, self.nodename)
+            # Grab all instances assigned to this node:
+            instances = self.conductor_api.instance_get_all_by_host_and_node(
+                context, self.host, self.nodename)
 
-        # Now calculate usage based on instance utilization:
-        self._update_usage_from_instances(resources, instances)
+            # Now calculate usage based on instance utilization:
+            self._update_usage_from_instances(resources, instances)
 
-        # Grab all in-progress migrations:
-        capi = self.conductor_api
-        migrations = capi.migration_get_in_progress_by_host_and_node(context,
-                self.host, self.nodename)
+            # Grab all in-progress migrations:
+            capi = self.conductor_api
+            migrations = capi.migration_get_in_progress_by_host_and_node(context,
+                    self.host, self.nodename)
 
-        self._update_usage_from_migrations(context, resources, migrations)
+            self._update_usage_from_migrations(context, resources, migrations)
 
-        # Detect and account for orphaned instances that may exist on the
-        # hypervisor, but are not in the DB:
-        orphans = self._find_orphaned_instances()
-        self._update_usage_from_orphans(resources, orphans)
+            # Detect and account for orphaned instances that may exist on the
+            # hypervisor, but are not in the DB:
+            orphans = self._find_orphaned_instances()
+            self._update_usage_from_orphans(resources, orphans)
 
-        self._report_final_resource_view(resources)
+            self._report_final_resource_view(resources)
 
-        self._sync_compute_node(context, resources)
+            self._sync_compute_node(context, resources)
+        finally:
+            self.audit_lock.write_unlock()
 
     def _sync_compute_node(self, context, resources):
         """Create or update the compute node DB record."""
@@ -346,12 +378,46 @@ class ResourceTracker(object):
         else:
             LOG.audit(_("Free VCPU information unavailable"))
 
-    def _update(self, context, values, prune_stats=False):
+    class Update(object):
+        def __init__(self, context, values, prune_stats):
+            self.context = context
+            self.values = values
+            self.prune_stats = prune_stats
+            self.event = semaphore.Semaphore(0)
+            self.coalesced = 0
+
+    def _update(self, context, values, prune_stats=False, sem=None):
         """Persist the compute node updates to the DB."""
+
         if "service" in self.compute_node:
             del self.compute_node['service']
-        self.compute_node = self.conductor_api.compute_node_update(
-            context, self.compute_node, values, prune_stats)
+        self.compute_node.update(values)
+
+        update = self.Update(context, values.copy(), prune_stats)
+        self.updates.put(update)
+        if sem != None:
+            sem.release()
+        update.event.acquire()
+
+    def _update_thread(self):
+        while True:
+            # Block for the first update then drain the queue. Note that we will
+            # not block here indefinitely as fresh updates are added to the
+            # queue because we only evaluate self.updates.qsize() once.
+            LOG.debug(_("blocking for updates"))
+            updates = [self.updates.get()]
+            for i in range(self.updates.qsize()):
+                updates.append(self.updates.get())
+                LOG.debug(_("got update, have %d") % len(updates))
+            LOG.debug(_("processing %d updates") % len(updates))
+            do_prune = True in [update.prune_stats for update in updates]
+            update = updates[-1]
+            self.conductor_api.compute_node_update(
+                update.context, self.compute_node,
+                update.values, update.prune_stats)
+            for update in updates:
+                update.coalesced = len(updates)
+                update.event.release()
 
     def confirm_resize(self, context, migration, status='confirmed'):
         """Cleanup usage for a confirmed resize."""
