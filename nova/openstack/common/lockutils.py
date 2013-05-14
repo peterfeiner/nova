@@ -129,7 +129,16 @@ else:
     InterProcessLock = _PosixLock
 
 _semaphores = weakref.WeakValueDictionary()
+_semaphores_lock = semaphore.Semaphore()
 
+def get_named_semaphore(name):
+    with _semaphores_lock:
+        try:
+            return _semaphores[name]
+        except KeyError:
+            sem = semaphore.Semaphore()
+            _semaphores[name] = sem
+            return sem
 
 def synchronized(name, lock_file_prefix, external=False, lock_path=None):
     """Synchronization decorator.
@@ -170,17 +179,8 @@ def synchronized(name, lock_file_prefix, external=False, lock_path=None):
     def wrap(f):
         @functools.wraps(f)
         def inner(*args, **kwargs):
-            # NOTE(soren): If we ever go natively threaded, this will be racy.
-            #              See http://stackoverflow.com/questions/5390569/dyn
-            #              amically-allocating-and-destroying-mutexes
-            sem = _semaphores.get(name, semaphore.Semaphore())
-            if name not in _semaphores:
-                # this check is not racy - we're already holding ref locally
-                # so GC won't remove the item and there was no IO switch
-                # (only valid in greenthreads)
-                _semaphores[name] = sem
-
-            with trace.Tracer('lock %s' % name) as t, sem:
+            sem = get_named_semaphore(name)
+            with trace.Tracer('lock %s' % name), trace.Tracer('wait %s' % name) as t, sem:
                 t.end()
                 LOG.debug(_('Got semaphore "%(lock)s" for method '
                             '"%(method)s"...'), {'lock': name,

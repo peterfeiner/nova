@@ -21,6 +21,8 @@ model.
 
 from oslo.config import cfg
 
+from eventlet import semaphore, queue, spawn
+
 from nova.compute import claims
 from nova.compute import instance_types
 from nova.compute import task_states
@@ -69,9 +71,15 @@ class ResourceTracker(object):
         self.tracked_instances = {}
         self.tracked_migrations = {}
         self.conductor_api = conductor.API()
+        self.updates = queue.Queue()
+        spawn(self._update_thread)
 
-    @lockutils.synchronized(COMPUTE_RESOURCE_SEMAPHORE, 'nova-')
     def instance_claim(self, context, instance_ref, limits=None):
+        sem = lockutils.get_named_semaphore(COMPUTE_RESOURCE_SEMAPHORE)
+        sem.acquire()
+        return self._instance_claim(context, instance_ref, limits, sem)
+
+    def _instance_claim(self, context, instance_ref, limits=None, sem=None):
         """Indicate that some resources are needed for an upcoming compute
         instance build operation.
 
@@ -107,13 +115,16 @@ class ResourceTracker(object):
 
         if claim.test(self.compute_node, limits):
 
+            # TODO: move this after self._update and deal with audit problem.
+            # Pretty decent serialization elimination.
             self._set_instance_host_and_node(context, instance_ref)
 
             # Mark resources in-use and update stats
             self._update_usage_from_instance(self.compute_node, instance_ref)
 
             # persist changes to the compute node:
-            self._update(context, self.compute_node)
+            self._update(context, self.compute_node, sem=sem)
+
 
             return claim
 
@@ -238,6 +249,7 @@ class ResourceTracker(object):
     def disabled(self):
         return self.compute_node is None
 
+    # Runs every 60s
     @lockutils.synchronized(COMPUTE_RESOURCE_SEMAPHORE, 'nova-')
     def update_available_resource(self, context):
         """Override in-memory calculations of compute node resource usage based
@@ -359,12 +371,47 @@ class ResourceTracker(object):
         else:
             LOG.audit(_("Free VCPU information unavailable"))
 
-    def _update(self, context, values, prune_stats=False):
+    class Update(object):
+        def __init__(self, context, values, prune_stats):
+            self.context = context
+            self.values = values
+            self.prune_stats = prune_stats
+            self.event = semaphore.Semaphore(0)
+            self.coalesced = 0
+
+    def _update(self, context, values, prune_stats=False, sem=None):
         """Persist the compute node updates to the DB."""
         if "service" in self.compute_node:
             del self.compute_node['service']
-        self.compute_node = self.conductor_api.compute_node_update(
-            context, self.compute_node, values, prune_stats)
+        self.compute_node.update(values)
+        
+        update = self.Update(context, values.copy(), prune_stats)
+        self.updates.put(update)
+        if sem != None:
+            sem.release()
+        tracer = trace.Tracer('completion')
+        tracer.begin()
+        try:
+            update.event.acquire()
+        finally:
+            tracer.end({'coalesced': update.coalesced})
+    
+    def _update_thread(self):
+        while True:
+            updates = []
+            while not self.updates.empty() or len(updates) == 0:
+                LOG.debug(_("blocking for update"))
+                updates.append(self.updates.get())
+                LOG.debug(_("got update, have %d") % len(updates))
+            LOG.debug(_("processing %d updates") % len(updates))
+            do_prune = True in [update.prune_stats for update in updates]
+            update = updates[-1]
+            self.conductor_api.compute_node_update(
+                update.context, self.compute_node,
+                update.values, update.prune_stats)
+            for update in updates:
+                update.coalesced = len(updates)
+                update.event.release()
 
     def confirm_resize(self, context, migration, status='confirmed'):
         """Cleanup usage for a confirmed resize."""
