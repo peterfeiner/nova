@@ -901,8 +901,10 @@ class ComputeDriver(object):
             LOG.debug("Emitting event %s" % str(event))
             self._compute_event_callback(event)
         except Exception, ex:
-            LOG.error(_("Exception dispatching event %(event)s: %(ex)s")
-                        % locals())
+            LOG.exception(_("Exception dispatching event %(event)s: %(ex)s")
+                            % locals())
+            import os
+            os._exit(1)
 
 
 def load_compute_driver(virtapi, compute_driver=None):

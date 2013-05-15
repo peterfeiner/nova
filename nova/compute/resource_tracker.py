@@ -76,8 +76,13 @@ class ResourceTracker(object):
 
     def instance_claim(self, context, instance_ref, limits=None):
         sem = lockutils.get_named_semaphore(COMPUTE_RESOURCE_SEMAPHORE)
-        sem.acquire()
-        return self._instance_claim(context, instance_ref, limits, sem)
+        #sem.acquire()
+        #try:
+        #    return self._instance_claim(context, instance_ref, limits, sem)
+        #except:
+        #    sem.release()
+        with sem:
+            return self._instance_claim(context, instance_ref, limits, sem)
 
     def _instance_claim(self, context, instance_ref, limits=None, sem=None):
         """Indicate that some resources are needed for an upcoming compute
@@ -381,26 +386,37 @@ class ResourceTracker(object):
 
     def _update(self, context, values, prune_stats=False, sem=None):
         """Persist the compute node updates to the DB."""
+
+        """Persist the compute node updates to the DB."""
+        if "service" in self.compute_node:
+            del self.compute_node['service']
+        self.compute_node = self.conductor_api.compute_node_update(
+            context, self.compute_node, values, prune_stats)
+        return
+
         if "service" in self.compute_node:
             del self.compute_node['service']
         self.compute_node.update(values)
         
         update = self.Update(context, values.copy(), prune_stats)
         self.updates.put(update)
-        if sem != None:
-            sem.release()
+        #if sem != None:
+            #sem.release()
         tracer = trace.Tracer('completion')
         tracer.begin()
         try:
             update.event.acquire()
         finally:
             tracer.end({'coalesced': update.coalesced})
-    
+
     def _update_thread(self):
         while True:
-            updates = []
-            while not self.updates.empty() or len(updates) == 0:
-                LOG.debug(_("blocking for update"))
+            # Block for the first update then drain the queue. Note that we will
+            # not block here indefinitely as fresh updates are added to the
+            # queue because we only evaluate self.updates.qsize() once.
+            LOG.debug(_("blocking for updates"))
+            updates = [self.updates.get()]
+            for i in range(self.updates.qsize()):
                 updates.append(self.updates.get())
                 LOG.debug(_("got update, have %d") % len(updates))
             LOG.debug(_("processing %d updates") % len(updates))
