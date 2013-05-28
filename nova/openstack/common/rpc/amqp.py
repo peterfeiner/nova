@@ -44,6 +44,7 @@ from nova.openstack.common.gettextutils import _
 from nova.openstack.common import local
 from nova.openstack.common import log as logging
 from nova.openstack.common.rpc import common as rpc_common
+from nova.openstack.common.trace import Tracer
 
 
 # TODO(pekowski): Remove this option in Havana.
@@ -590,17 +591,20 @@ def multicall(conf, context, topic, msg, timeout, connection_pool):
     # TODO(pekowski): Remove this flag and the code under the if clause
     #                 in Havana.
     if not conf.amqp_rpc_single_reply_queue:
+        assert 0
         conn = ConnectionContext(conf, connection_pool)
         wait_msg = MulticallWaiter(conf, conn, timeout)
         conn.declare_direct_consumer(msg_id, wait_msg)
         conn.topic_send(topic, rpc_common.serialize_msg(msg), timeout)
     else:
-        with _reply_proxy_create_sem:
-            if not connection_pool.reply_proxy:
-                connection_pool.reply_proxy = ReplyProxy(conf, connection_pool)
+        with Tracer('lock _reply_proxy_create_sem'):
+            with Tracer('wait _reply_proxy_create_sem') as t, _reply_proxy_create_sem:
+                t.end()
+                if not connection_pool.reply_proxy:
+                    connection_pool.reply_proxy = ReplyProxy(conf, connection_pool)
         msg.update({'_reply_q': connection_pool.reply_proxy.get_reply_q()})
         wait_msg = MulticallProxyWaiter(conf, msg_id, timeout, connection_pool)
-        with ConnectionContext(conf, connection_pool) as conn:
+        with Tracer('conn'), ConnectionContext(conf, connection_pool) as conn:
             conn.topic_send(topic, rpc_common.serialize_msg(msg), timeout)
     return wait_msg
 
