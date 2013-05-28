@@ -15,6 +15,7 @@ from eventlet import patcher, tpool, corolocal
 from oslo.config import cfg
 
 trace_opts = [
+    cfg.BoolOpt('trace_enabled', default=False),
     cfg.StrOpt('trace_dir', default=tempfile.gettempdir()),
 ]
 
@@ -92,6 +93,8 @@ def _current_request_id():
 
 def _traced_http_request(fn):
     def wrapper(*args, **kwargs):
+        if not CONF.trace_enabled:
+            return fn(*args, **kwargs)
         try:
             request_id = _current_request_id()
         except AttributeError:
@@ -112,6 +115,10 @@ METADATA = 'M'
 
 @contextlib.contextmanager
 def trace(request_id, args=None, resume=False):
+    if not CONF.trace_enabled:
+        yield
+        return
+
     if not resume:
         # Make sure the file exists and is empty.
         with _open_trace_file(request_id, os.O_CREAT | os.O_TRUNC) as f:
@@ -177,10 +184,11 @@ class Tracer(object):
         self.end()
 
     def begin(self, args=None):
-        emit(BEGIN, self.name, _dict_union(self.begin_args, args))
+        if CONF.trace_enabled:
+            emit(BEGIN, self.name, _dict_union(self.begin_args, args))
 
     def end(self, args=None):
-        if not self.ended:
+        if CONF.trace_enabled and not self.ended:
             emit(END, self.name, _dict_union(self.end_args, args))
             self.ended = True
 
