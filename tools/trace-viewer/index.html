@@ -135,7 +135,7 @@ function refresh_nav()
     $('#nav #status').text('Loading ...');
     $.ajax('/traces')
     .done(function(data, status, xhr) {
-        data.sort(function(a,b) {return a.start - b.start;});
+        data.sort(function(a,b) {return b.start - a.start;});
 
         var form = $('#traces');
         form.html('');

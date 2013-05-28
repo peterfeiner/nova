@@ -7,7 +7,10 @@ import os
 import sys
 import time
 import glob
-import json
+try:
+    import ujson as json
+except ImportError:
+    import json
 
 import SimpleHTTPServer
 import BaseHTTPServer
@@ -21,8 +24,12 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         traces = []
-        for path in glob.glob('traces/*.trace'):
-            events = json.loads('%s null]' % open(path).read())[0:-1]
+        for path in glob.glob('traces/libvirt/*.trace') + glob.glob('traces/*.trace'):
+            try:
+                events = json.loads('%s null]' % open(path).read())[0:-1]
+            except ValueError:
+                print 'error loading', path
+                continue
             if len(events) == 0:
                 continue
             traces.append({'path': path,
