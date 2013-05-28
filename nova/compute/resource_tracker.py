@@ -238,22 +238,20 @@ class ResourceTracker(object):
             if self.disabled:
                 return
 
-            is_deleted_instance = instance['vm_state'] == vm_states.DELETED
-
             uuid = instance['uuid']
 
             # don't update usage for this instance unless it submitted a resource
-            # claim first and it's being deleted. No stats will go out of sync
-            # because self._update_usage_from_instance only modifies anything when
-            # an instance is created or deleted (except for self.stats, but the only
-            # important stats in there, ie those that affect claims, are
-            # num_vcpus_used and num_instances, which only change when an instance
-            # is created or deleted).
-            if uuid in self.tracked_instances and \
-               (is_deleted_instance or not CONF.opt_update_usage):
+            # claim first
+            if uuid in self.tracked_instances:
+                before = self.compute_node.copy()
                 self._update_usage_from_instance(self.compute_node, instance)
-                self._update(context.elevated(), self.compute_node, sem=sem)
-                released = True
+                LOG.debug(_("before: %s\nafter%s\n") %
+                          (before, self.compute_node))
+                if not CONF.opt_update_usage or before != self.compute_node:
+                    self._update(context.elevated(), self.compute_node, sem=sem)
+                    released = True
+                else:
+                    LOG.debug(_("saved an update!"))
         finally:
             if not released:
                 sem.release()
