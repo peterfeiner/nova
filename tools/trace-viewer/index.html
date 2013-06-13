@@ -148,8 +148,8 @@ function refresh_nav()
             var trace = data[i];
 
             if (trace.args.type == 'api' && 
-                ($.inArray(trace.args.api.action, ['detail', 'show']) != -1 ||
-                 trace.args.api.action == 'index'))
+                ($.inArray(trace.args.api.action,
+                           ['detail', 'show', 'index']) != -1))
                 continue;
 
             traces.push(trace);
