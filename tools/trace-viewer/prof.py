@@ -1,40 +1,27 @@
 #!/usr/bin/env python
 
+import argparse
 import datetime
+import json
+import novaclient
+import novaclient.shell
 import os
 import signal
 import sys
 import time
-import json
-import argparse
+import logging
 
+from contextlib import contextmanager
 from numpy import mean, median
-from subprocess import Popen, check_output
-from threading import Thread, Lock
+from subprocess import Popen, check_output, CalledProcessError, PIPE
+from threading import Thread, Lock, Condition
+
+DEV_NULL = open('/dev/null', 'w+')
+
+PRINT_LOCK = Lock()
 
 def timestamp():
     return str(datetime.datetime.now())
-
-class Instance(object):
-    def __init__(self, uuid, name, status, task_state, power_state, networks=''):
-        self.uuid = uuid
-        self.name = name
-        self.status = status
-        self.task_state = task_state
-        self.power_state = power_state
-        self.networks = {}
-        for network in networks.split(','):
-            name, sep, addr = network.partition('=')
-            if sep:
-                self.networks[name] = addr
-
-    def any_ip(self):
-        return self.networks.values()[0]
-
-    def __repr__(self):
-        return 'Instance(%r, %r, %r, %r, %r, %r)' % \
-            (self.uuid, self.name, self.status, self.task_state,
-             self.power_state, self.networks)
 
 class Timer(object):
     def __init__(self, name):
@@ -47,75 +34,155 @@ class Timer(object):
     def elapsed(self):
         return time.time() - self.start_time
 
-DEV_NULL = open('/dev/null', 'w+')
+class InstanceDoesNotExistError(Exception):
+    def __init__(self, instance_id):
+        Exception.__init__(self, 'Instance with id %s does not exist.' %
+                           instance_id)
 
-def nova_list():
-    out = check_output(['nova', 'list'])
-    instances = []
-    for line in out.split('\n'):
-        line = line.strip()
-        if line == '' or '-+-' in line or 'Networks' in line:
-            continue
-        comps = [x.strip() for x in line.split('|') if x.strip() != '']
-        instance = Instance(*comps)
-        instances.append(instance)
-    return instances
+class InstanceHasNoIpError(Exception):
+    def __init__(self, instance_id):
+        Exception.__init__(self, 'Instance with id %s has no ip address.' %
+                           instance_id)
 
-def nova_boot(name, image, flavor, key_name=None):
-    args = ['nova', 'boot',
-            '--image', image,
-            '--flavor', flavor]
-    if key_name != None:
-        args.extend(['--key-name', key_name])
-    args.append(name)
-    return Popen(args, stdout=DEV_NULL)
+class Instance(object):
+    def __init__(self, nova, id):
+        self.__nova = nova
+        self.__id = id
 
-def nova_live_image_start(name, image):
-    return Popen(['nova', 'live-image-start', '--live-image', image, name],
-                 stdout=DEV_NULL)
+    def delete(self):
+        self.__nova.delete(self.__id)
 
-def nova_delete(name):
-    return Popen(['nova', 'delete', name], stdout=DEV_NULL)
+    def __get(self):
+        instances = self.__nova.list()
+        for instance in instances:
+            if instance.id == self.__id:
+                return instance
+        raise InstanceDoesNotExistError(self.__id)
 
+    def any_ip(self):
+        instance = self.__get()
+        for addrs in instance.networks.itervalues():
+            if len(addrs) > 0:
+                return addrs[0]
+        raise InstanceHasNoIpError(self.__id)
+
+    def get_status(self):
+        return self.__get().status
+
+    def __repr__(self):
+        return 'Instance(%r, %r)' % (self.__nova, self.__id)
+
+def create_novaclient():
+    shell = novaclient.shell.OpenStackComputeShell()
+    extensions = shell._discover_extensions('1.1')
+    no_cache = os.environ.get('OS_NO_CACHE', '1') in ['1', 'y']
+    getenv = os.environ.get
+    return novaclient.client.Client('2',
+                                    getenv('OS_USERNAME'),
+                                    getenv('OS_PASSWORD'),
+                                    getenv('OS_TENANT_NAME'),
+                                    getenv('OS_AUTH_URL'),
+                                    no_cache=no_cache,
+                                    http_log_debug=getenv('NOVACLIENT_DEBUG'),
+                                    extensions=extensions)
+
+class NovaClientPool(object):
+    def __init__(self, size):
+        self.__all = set([create_novaclient() for i in range(size)])
+        self.__available = self.__all.copy()
+        self.__cond = Condition()
+
+    @contextmanager
+    def scoped(self):
+        client = self.get()
+        try:
+            yield client
+        finally:
+            self.put(client)
+
+    def get(self):
+        with self.__cond:
+            while len(self.__available) == 0:
+                self.__cond.wait()
+            return self.__available.pop()
+
+    def put(self, client):
+        assert client in self.__all
+        assert client not in self.__available
+        with self.__cond:
+            self.__available.add(client)
+            self.__cond.notify()
+
+lists = 0
 class Nova(object):
-
-    def __init__(self):
-        self.__list_thread = Thread(target=self.__list_main)
-        self.__list_thread.daemon = True
-        self.__list_thread.start()
+    def __init__(self, poolsize=1):
         self.__list = []
-
-    def __list_main(self):
-        while True:
-            self.__list = nova_list()
-            time.sleep(0.5)
+        self.__list_cond = Condition()
+        self.__list_status = 'IDLE'
+        self.__novaclient_pool = NovaClientPool(poolsize)
 
     def list(self):
-        return self.__list
+        global lists
+        #with self.__novaclient_pool.scoped() as client:
+        #    with PRINT_LOCK:
+        #        lists += 1
+        #        print 'lists', lists
+        #    return client.servers.list()
+        with self.__list_cond:
+            if self.__list_status == 'IDLE':
+                self.__list_status = 'ACTIVE'
+            else:
+                while True:
+                    self.__list_cond.wait()
+                    if self.__list_status == 'ERROR':
+                        self.__list_status = 'ACTIVE'
+                        break
+                    elif self.__list_status == 'IDLE':
+                        return self.__list
+                    else:
+                        assert self.__list_status == 'ACTIVE'
 
-    def boot(self, image, flavor, key_name=None):
-        return nova_boot(image, flavor, key_name=key_name)
+        while True:
+            try:
+                with self.__novaclient_pool.scoped() as client:
+                    with PRINT_LOCK:
+                        lists += 1
+                        print 'lists', lists
+                    new_list = client.servers.list()
+                break
+            except Exception:
+                time.sleep(0.5)
+                continue
+            except:
+                with self.__list_cond:
+                    self.__list_status = 'ERROR'
+                    self.__list_cond.notify()
+                raise
+
+        with self.__list_cond:
+            self.__list = new_list
+            self.__list_status = 'IDLE'
+            self.__list_cond.notify_all()
+            return self.__list
+
+    def boot(self, name, image, flavor, key_name=None):
+        with self.__novaclient_pool.scoped() as client:
+            instances = client.servers.create(name=name,
+                                              image=image,
+                                              flavor=flavor,
+                                              key_name=key_name)
+        assert len(instances) == 1
+        return Instance(self, instances[0].id)
 
     def live_image_start(self, name, image):
-        return nova_live_image_start(name, image)
+        with self.__novaclient_pool.scoped() as client:
+            instances = client.cobalt.start_live_image(server=image, name=name)
+        assert len(instances) == 1
+        return Instance(self, instances[0].id)
 
-    def delete(self, name):
-        return nova_delete(name)
-
-class PopenLoopThread(Thread):
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-        self.delay = kwargs.pop('delay', None)
-        Thread.__init__(self)
-
-    def run(self):
-        while True:
-            p = Popen(*self.args, **self.kwargs)
-            if p.wait() == 0:
-                break
-            if self.delay != None:
-                time.sleep(self.delay)
+    def delete(self, id):
+        with self.__novaclient_pool.scoped() as client:
+            client.servers.delete(id)
 
 class Atop(object):
     def __init__(self, title, interval=2):
@@ -125,14 +192,19 @@ class Atop(object):
 
     def start(self):
         assert self.process == None
-        self.process = Popen(['sudo', 'atop',
-                              '-w', '%s@%s' % (self.title,
-                                               timestamp().replace(' ', '-')),
-                              str(self.interval)])
+        path = '%s@%s.atop' % (self.title, timestamp().replace(' ', '-'))
+        self.process = Popen(['sudo', 'atop', '-w', path, str(self.interval)])
 
     def stop(self):
         self.process.send_signal(signal.SIGINT)
         self.process.wait()
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.stop()
 
 class NullAtop(object):
     def start(self):
@@ -141,125 +213,100 @@ class NullAtop(object):
     def stop(self):
         pass
 
-class Log(object):
+    def __enter__(self):
+        return self
 
-    def __init__(self, timer, id=None):
+    def __exit__(self, type, value, traceback):
+        pass
+
+class PhaseLog(object):
+    def __init__(self, timer):
+        self.last_phase = {}
+        self.in_phase = {}
         self.timer = timer
-        self.id = id
+        self.lock = Lock()
+        self.order = []
 
-    @classmethod
-    def header(cls, id=False):
-        line = []
-        if id:
-            line.append('ID')
-        line.extend('TIME PHASE PH+T ARGS'.split())
-        cls.__emit(line)
+    def __enter__(self):
+        self.start()
+        return self
 
-    __emit_lock = Lock()
+    def __exit__(self, type, value, traceback):
+        self.stop()
 
-    @classmethod
-    def __emit(cls, line):
-        with cls.__emit_lock:
-            print '\t '.join(map(str, line))
-            sys.stdout.flush()
+    def start(self):
+        pass
 
-    def __call__(self, timer, *args):
-        line = []
-        if self.id != None:
-            line.append(self.id)
-        line.append(round(self.timer.elapsed(), 2))
-        line.append(timer.name)
-        line.append(round(timer.elapsed(), 2))
-        line.append(' '.join(map(str, args)))
-        self.__emit(line)
+    def stop(self):
+        pass
+
+    def event(self, experiment, *args):
+        with self.lock:
+            phase = experiment.phase
+            if phase not in self.in_phase:
+                self.order.append(phase)
+
+            try:
+                # No change.
+                if self.last_phase[experiment] == phase:
+                    return
+
+                # One less in this phase.
+                self.in_phase[self.last_phase[experiment]] -= 1
+            except KeyError:
+                pass
+            self.in_phase.setdefault(phase, 0)
+            self.in_phase[phase] += 1
+            self.last_phase[experiment] = phase
+
+            with PRINT_LOCK:
+                print '%.2f' % self.timer.elapsed(), '\t',
+                for phase in self.order:
+                    print phase, '%-3d' % self.in_phase[phase], 
+                print
 
 class Phase(object):
-    def __init__(self, name, start, end):
-        self.name = name
-        self.start = start
-        self.end = end
-        self.duration = self.end - self.start
-        assert self.duration >= 0
+    def __init__(self, timer):
+        self.name = timer.name
+        self.start = timer.start_time
+        self.duration = timer.elapsed()
+        self.end = self.start + self.duration
 
 class Experiment(object):
-    def __init__(self, args, atop=None, nova=None, log=None):
+    def __init__(self, name, args, nova):
         self.args = args
         self.timer = Timer('total')
-
-        if nova == None:
-            nova = Nova()
+        self.phase = 'setup'
+        self.listeners = []
+        self.name = name
         self.nova = nova
-
-        if atop == None:
-            atop = Atop('%s-%s' % (self.args.op, self.args.n))
-        self.atop = atop
-
-        if log == None:
-            log = Log(self.timer)
-            log.header()
-        self.log = log
-
-        self.__phase_start = {}
         self.phases = []
 
+    def add_listener(self, listener):
+        self.listeners.append(listener)
+
+    def remove_listener(self, listener):
+        i = list(reversed(self.listeners)).index(listener)
+        self.listeners.pop(len(self.listeners) - i - 1)
+
+    def event(self, *args):
+        for listener in self.listeners:
+            listener(self, *args)
+
     def start_phase(self, name):
-        assert name not in self.__phase_start
-        self.__phase_start[name] = self.timer.elapsed()
-
-    def end_phase(self, name):
-        self.phases.append(Phase(name,
-                                 start=self.__phase_start.pop(name),
-                                 end=self.timer.elapsed()))
-
-    def wait_for_processes(self, processes, status, timer):
-        for i in range(len(processes)):
-            if processes[i].poll() == None:
-                self.log(timer, {status: i})
-            assert processes[i].wait() == 0
-        self.log(timer, {status: len(processes)})
-
-    def wait_for_threads(self, threads, status, timer):
-        for i in range(len(threads)):
-            if threads[i].is_alive():
-                self.log(timer, {status: i})
-            threads[i].join()
-        self.log(timer, {status: len(threads)})
-
-    def get_instances(self):
-        return filter(lambda i: i.name.startswith(self.args.name_prefix),
-                      self.nova.list())
-
-    def start_atop(self):
-        path = '%s-%d@%s.atop' % (self.args.op,
-                                  self.args.n,
-                                  timestamp().replace(' ', '-'))
-        return Popen(['sudo', 'atop', '-w', path, '2'])
+        self.phase = name
+        self.event()
 
     def run(self):
-        if len(self.get_instances()) != 0:
-            raise Exception('There are already instances running.')
-
-        self.atop.start()
-        self.start_phase('total')
-        try:
-            self.timer.start()
-            self.__create()
-            if self.args.check_ping:
-                self.__check_ping()
-            if self.args.check_nmap:
-                self.__check_nmap()
-            if self.args.check_ssh:
-                self.__check_ssh()
-            self.__delete()
-        finally:
-            self.atop.stop()
-        self.end_phase('total')
-        assert len(self.__phase_start) == 0
-
-    def instance_name(self, i):
-        assert i >= 1
-        assert i <= self.args.n
-        return '%s-%d-of-%d' % (self.args.name_prefix, i, self.args.n)
+        self.__create()
+        if self.args.check_ping:
+            self.__check_ping()
+        if self.args.check_nmap:
+            self.__check_nmap()
+        if self.args.check_ssh:
+            self.__check_ssh()
+        self.__delete()
+        self.start_phase('fin')
 
     def __boot_op(self, name):
         return self.nova.boot(name,
@@ -271,135 +318,93 @@ class Experiment(object):
         return self.nova.live_image_start(name, self.args.image)
 
     def __create(self):
-        self.start_phase(self.args.op)
+        self.start_phase(self.args.op + '_api')
         if self.args.op == 'boot':
             op_func = self.__boot_op
         else:
             op_func = self.__launch_op
 
-        timer = Timer(self.args.op)
-        processes = []
-        for i in range(self.args.n):
-            processes.append(op_func(self.instance_name(i + 1)))
-        self.wait_for_processes(processes, 'api ok', timer)
-
-        last_active = -1
+        self.start_phase(self.args.op)
+        self.instance = op_func(self.name)
         while True:
-            instances = self.get_instances()
-            active = 0
-            for i in instances:
-                assert i.status != 'ERROR'
-                if i.status == 'ACTIVE':
-                    active += 1
-            if last_active < active:
-                self.log(timer, {'active': active})
-            if active == self.args.n:
+            status = self.instance.get_status()
+            assert status != 'ERROR'
+            if status == 'ACTIVE':
                 break
-            last_active = active
-            time.sleep(1)
-        self.end_phase(self.args.op)
+            #time.sleep(1)
 
     def __delete(self):
-        instances = self.get_instances()
+        self.start_phase('delete_api')
+        self.instance.delete()
         self.start_phase('delete')
-
-        timer = Timer('delete')
-        processes = []
-        for i in instances:
-            processes.append(self.nova.delete(i.uuid))
-        self.wait_for_processes(processes, 'api ok', timer)
-
-        last_existing = len(instances)
         while True:
-            instances = self.get_instances()
-            for i in instances:
-                assert i.status != 'ERROR'
-            if len(instances) < last_existing:
-                self.log(timer, {'deleted': last_existing - len(instances)})
-            if len(instances) == 0:
+            try:
+                assert self.instance.get_status() != 'ERROR'
+            except InstanceDoesNotExistError:
                 break
-            last_existing = len(instances)
-            time.sleep(1)
-        self.end_phase('delete')
+            #time.sleep(1)
 
     def __check_nmap(self):
         self.start_phase('nmap')
-        self.end_phase('nmap')
 
     def __check_ping(self):
         self.start_phase('ping')
-        instances = self.get_instances()
-        timer = Timer('ping')
-        threads = []
-        for i in instances:
-            thread = PopenLoopThread(['ping', '-c', '1', instance.any_ip()],
-                                     stdout=DEV_NULL)
-            thread.start()
-            threads.append(thread)
-        self.wait_for_threads(threads, 'replied', timer)
-        self.end_phase('ping')
+        while True:
+            p = Popen(['ping', '-c', '1', self.instance.any_ip()],
+                      stdout=DEV_NULL)
+            if p.wait() == 0:
+                break
 
     def __check_ssh(self):
         self.start_phase('ssh')
-        instances = self.get_instances()
-        timer = Timer('ssh')
-        threads = []
-        for i in instances:
-            thread = PopenLoopThread(['ssh',
-                                      '-l', self.args.check_ssh_user,
-                                      '-o', 'UserKnownHostsFile=/dev/null',
-                                      '-o', 'StrictHostKeyChecking=no',
-                                      '-o', 'PasswordAuthentication=no',
-                                      i.any_ip(),
-                                      self.args.check_ssh_command],
-                                     stdout=DEV_NULL,
-                                     stderr=DEV_NULL,
-                                     delay=1)
-            thread.start()
-            threads.append(thread)
-        self.wait_for_threads(threads, 'ssh %s' % self.args.check_ssh_command,
-                              timer)
-        self.end_phase('ssh')
-
-    def report(self):
-        print '\t '.join(['PHASE', 'START', 'END', 'DURATION'])
-        for phase in self.phases:
-            print '\t '.join([phase.name,
-                              str(round(phase.start, 2)),
-                              str(round(phase.end, 2)),
-                              str(round(phase.duration, 2))])
+        while True:
+            p = Popen(['ssh',
+                       '-l', self.args.check_ssh_user,
+                       '-o', 'UserKnownHostsFile=/dev/null',
+                       '-o', 'StrictHostKeyChecking=no',
+                       '-o', 'PasswordAuthentication=no',
+                       self.instance.any_ip(),
+                       self.args.check_ssh_command],
+                       stdout=DEV_NULL,
+                       stderr=DEV_NULL)
+            if p.wait() == 0:
+                break
+            time.sleep(1)
 
 class ParallelExperiment(object):
-    def __init__(self, args):
+    def __init__(self, args, atop, nova):
         self.args = args
-        self.atop = Atop('%s-%s' % (self.args.op, self.args.n))
-        self.nova = Nova()
-        self.timer = Timer('total')
-        self.experiments = []
+        self.atop = atop
+        self.nova = nova
 
     def run(self):
-        Log.header(id=True)
         threads = []
-        for i in range(self.args.n):
-            id = i + 1
+        timer = Timer('total')
+        log = PhaseLog(timer)
+        timer.start()
+        with self.atop, log:
+            for i in range(self.args.n):
+                experiment = Experiment('%s-%s-of-%s' % (self.args.name_prefix,
+                                                         i + 1, self.args.n),
+                                        self.args, self.nova)
+                experiment.add_listener(log.event)
+                thread = Thread(target=experiment.run)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
 
-            args = clone_args(self.args)
-            args.n = 1
-            args.name_prefix = '%s-%s' % (self.args.name_prefix, id)
-            args.parallel = False
-
-            log = Log(timer=self.timer, id=id)
-            
-            experiment = Experiment(args, NullAtop(), self.nova, log)
-            self.experiments.append(experiment)
-            thread = Thread(target=experiment.run)
-            thread.start()
-            threads.append(thread)
-
-        for thread in threads:
-            thread.join()
+            # Join all of the threads. Wakeup every 1s so we can check for
+            # keyboard interrupts.
+            while True:
+                for thread in threads:
+                    if thread.is_alive():
+                        thread.join(1)
+                        break
+                else:
+                    break
 
     def report(self):
+        return
         byname = {}
 
         for e in self.experiments:
@@ -439,7 +444,9 @@ def parse_argv(argv):
     parser.add_argument('--check-ssh-command', default='true')
     parser.add_argument('--check-ping', action='store_true')
     parser.add_argument('--check-nmap', type=int, default=None)
-    parser.add_argument('--parallel', action='store_true')
+    parser.add_argument('--atop', action='store_true')
+    parser.add_argument('--atop-interval', type=int, default=2)
+    parser.add_argument('--debug', action='store_true')
     return parser.parse_args(argv[1:])
 
 def clone_args(args):
@@ -450,11 +457,17 @@ def clone_args(args):
 
 def main(argv):
     args = parse_argv(argv)
-    if args.parallel:
-        cls = ParallelExperiment
+
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+
+    if args.atop:
+        atop = Atop('%s-%s' % (args.op, args.n), args.atop_interval)
     else:
-        cls = Experiment
-    experiment = cls(args)
+        atop = NullAtop()
+
+    nova = Nova(poolsize=args.n)
+    experiment = ParallelExperiment(args, atop=atop)
     experiment.run()
     print
     experiment.report()
