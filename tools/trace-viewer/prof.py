@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 
 import argparse
 import datetime
@@ -113,21 +113,22 @@ class NovaClientPool(object):
             self.__available.add(client)
             self.__cond.notify()
 
-lists = 0
 class Nova(object):
-    def __init__(self, poolsize=1):
+    def __init__(self, poolsize=1, simple_list=False):
         self.__list = []
         self.__list_cond = Condition()
         self.__list_status = 'IDLE'
         self.__novaclient_pool = NovaClientPool(poolsize)
+        if simple_list:
+            self.list = self.__simple_list
+        else:
+            self.list = self.__coalesced_list
 
-    def list(self):
-        global lists
-        #with self.__novaclient_pool.scoped() as client:
-        #    with PRINT_LOCK:
-        #        lists += 1
-        #        print 'lists', lists
-        #    return client.servers.list()
+    def __simple_list(self):
+        with self.__novaclient_pool.scoped() as client:
+            return client.servers.list()
+
+    def __coalesced_list(self):
         with self.__list_cond:
             if self.__list_status == 'IDLE':
                 self.__list_status = 'ACTIVE'
@@ -145,9 +146,6 @@ class Nova(object):
         while True:
             try:
                 with self.__novaclient_pool.scoped() as client:
-                    with PRINT_LOCK:
-                        lists += 1
-                        print 'lists', lists
                     new_list = client.servers.list()
                 break
             except Exception:
@@ -167,12 +165,11 @@ class Nova(object):
 
     def boot(self, name, image, flavor, key_name=None):
         with self.__novaclient_pool.scoped() as client:
-            instances = client.servers.create(name=name,
-                                              image=image,
-                                              flavor=flavor,
-                                              key_name=key_name)
-        assert len(instances) == 1
-        return Instance(self, instances[0].id)
+            instance = client.servers.create(name=name,
+                                             image=image,
+                                             flavor=flavor,
+                                             key_name=key_name)
+        return Instance(self, instance.id)
 
     def live_image_start(self, name, image):
         with self.__novaclient_pool.scoped() as client:
@@ -447,6 +444,8 @@ def parse_argv(argv):
     parser.add_argument('--atop', action='store_true')
     parser.add_argument('--atop-interval', type=int, default=2)
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--simple-list', action='store_true')
+    parser.add_argument('--client-pool-size', type=int, default=None)
     return parser.parse_args(argv[1:])
 
 def clone_args(args):
@@ -458,16 +457,20 @@ def clone_args(args):
 def main(argv):
     args = parse_argv(argv)
 
+    if args.client_pool_size == None:
+        args.client_pool_size = args.n
+
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
+        os.environ['NOVACLIENT_DEBUG'] = '1'
 
     if args.atop:
         atop = Atop('%s-%s' % (args.op, args.n), args.atop_interval)
     else:
         atop = NullAtop()
 
-    nova = Nova(poolsize=args.n)
-    experiment = ParallelExperiment(args, atop=atop)
+    nova = Nova(poolsize=args.client_pool_size, simple_list=args.simple_list)
+    experiment = ParallelExperiment(args, atop=atop, nova=nova)
     experiment.run()
     print
     experiment.report()
