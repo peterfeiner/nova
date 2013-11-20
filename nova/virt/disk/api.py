@@ -136,6 +136,8 @@ def get_disk_size(path):
 
 def extend(image, size, use_cow=False):
     """Increase image to size."""
+    return
+
     if not can_resize_image(image, size):
         return
 

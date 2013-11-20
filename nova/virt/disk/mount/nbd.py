@@ -87,6 +87,7 @@ class NbdMount(api.Mount):
         # already in use.
         LOG.debug(_('Get nbd device %(dev)s for %(imgfile)s'),
                   {'dev': device, 'imgfile': self.image})
+        raise Exception('Nobody likes nbd ...')
         _out, err = utils.trycmd('qemu-nbd', '-c', device, self.image,
                                  run_as_root=True)
         if err:
