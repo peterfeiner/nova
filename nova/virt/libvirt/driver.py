@@ -44,6 +44,7 @@ import errno
 import eventlet
 import functools
 import glob
+import inspect
 import os
 import shutil
 import socket
@@ -352,6 +353,26 @@ class LibvirtDriver(driver.ComputeDriver):
         "supports_recreate": True,
         }
 
+    def _conn_cached(f):
+        """Cache the f(self) result for the lifetime of the libvirt connection.
+        """
+        assert inspect.getargspec(f) == (['self'], None, None, None)
+        def wrapper(self):
+            try:
+                with self._wrapped_conn_lock:
+                    r = self._conn_cache[f]
+            except KeyError:
+                while True:
+                    self._conn_cache[f] = None
+                    r = f(self)
+                    with self._wrapped_conn_lock:
+                        if not self._conn_cache.has_key(f):
+                            continue
+                        self._conn_cache[f] = r
+                        break
+            return r
+        return wrapper
+
     def __init__(self, virtapi, read_only=False):
         super(LibvirtDriver, self).__init__(virtapi)
 
@@ -363,6 +384,7 @@ class LibvirtDriver(driver.ComputeDriver):
         self._initiator = None
         self._fc_wwnns = None
         self._fc_wwpns = None
+        self._conn_cache = {}
         self._wrapped_conn = None
         self._wrapped_conn_lock = threading.Lock()
         self._caps = None
@@ -636,6 +658,7 @@ class LibvirtDriver(driver.ComputeDriver):
             is_connected = bool(wrapped_conn)
             self.set_host_enabled(CONF.host, is_connected)
 
+        self._conn_cache = {}
         self._wrapped_conn = wrapped_conn
 
         try:
@@ -2727,6 +2750,7 @@ class LibvirtDriver(driver.ComputeDriver):
                         'due to an unexpected exception.') % CONF.host,
                      exc_info=True)
 
+    @_conn_cached
     def get_host_capabilities(self):
         """Returns an instance of config.LibvirtConfigCaps representing
            the capabilities of the host.
@@ -3649,6 +3673,7 @@ class LibvirtDriver(driver.ComputeDriver):
             # Convert it to MB
             return self.get_memory_mb_total() - avail / 1024
 
+    @_conn_cached
     def get_hypervisor_type(self):
         """Get hypervisor type.
 
@@ -3658,6 +3683,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         return self._conn.getType()
 
+    @_conn_cached
     def get_hypervisor_version(self):
         """Get hypervisor version.
 
@@ -3678,6 +3704,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         return method()
 
+    @_conn_cached
     def get_hypervisor_hostname(self):
         """Returns the hostname of the hypervisor."""
         hostname = self._conn.getHostname()
@@ -3690,6 +3717,7 @@ class LibvirtDriver(driver.ComputeDriver):
                              'new': hostname})
         return self._hypervisor_hostname
 
+    @_conn_cached
     def get_instance_capabilities(self):
         """Get hypervisor instance capabilities
 
@@ -3708,6 +3736,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         return instance_caps
 
+    @_conn_cached
     def get_cpu_info(self):
         """Get cpuinfo information.
 
