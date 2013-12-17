@@ -260,7 +260,6 @@ class Raw(Image):
             self.driver_format = data.file_format or 'raw'
 
     def create_image(self, prepare_template, base, size, *args, **kwargs):
-        @utils.synchronized(base, external=True, lock_path=self.lock_path)
         def copy_raw_image(base, target, size):
             libvirt_utils.copy_image(base, target)
             if size:
