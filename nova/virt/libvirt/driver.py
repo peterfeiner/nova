@@ -667,8 +667,11 @@ class LibvirtDriver(driver.ComputeDriver):
         # multiple concurrent connections are protected by _wrapped_conn_lock
         with self._wrapped_conn_lock:
             wrapped_conn = self._wrapped_conn
-            if not wrapped_conn or not self._test_connection(wrapped_conn):
-                wrapped_conn = self._get_new_connection()
+
+        if not wrapped_conn or not self._test_connection(wrapped_conn):
+            with self._wrapped_conn_lock:
+                if wrapped_conn is self._wrapped_conn:
+                    wrapped_conn = self._get_new_connection()
 
         return wrapped_conn
 
