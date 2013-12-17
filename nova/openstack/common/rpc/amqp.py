@@ -25,6 +25,8 @@ Specifically, this includes impl_kombu and impl_qpid.  impl_carrot also uses
 AMQP, but is deprecated and predates this code.
 """
 
+import coperf
+
 import collections
 import inspect
 import sys
@@ -443,10 +445,11 @@ class ProxyCallback(_ThreadPoolWithWait):
             ctxt.reply(_('No method for message: %s') % message_data,
                        connection_pool=self.connection_pool)
             return
+        spawn_when = coperf.now()
         self.pool.spawn_n(self._process_data, ctxt, version, method,
-                          namespace, args)
+                          namespace, spawn_when, args)
 
-    def _process_data(self, ctxt, version, method, namespace, args):
+    def _process_data(self, ctxt, version, method, namespace, spawn_when, args):
         """Process a message in a new thread.
 
         If the proxy object we have has a dispatch method
@@ -455,6 +458,8 @@ class ProxyCallback(_ThreadPoolWithWait):
         the old behavior of magically calling the specified method on the
         proxy we have here.
         """
+        coperf.buffer_event('rpc:recvd-%s' % method, spawn_when)
+        coperf.buffer_event('rpc:dispatched-%s' % method)
         ctxt.update_store()
         try:
             rval = self.proxy.dispatch(ctxt, version, method, namespace,

@@ -40,6 +40,8 @@ Supports KVM, LXC, QEMU, UML, and XEN.
 
 """
 
+import coperf
+
 import errno
 import eventlet
 import functools
@@ -358,7 +360,8 @@ class LibvirtDriver(driver.ComputeDriver):
         self._fc_wwnns = None
         self._fc_wwpns = None
         self._wrapped_conn = None
-        self._wrapped_conn_lock = threading.Lock()
+        self._wrapped_conn_lock = coperf.WaitWrapper('_wrapped_conn_lock',
+                                                     threading.Lock())
         self._caps = None
         self._vcpu_total = 0
         self.read_only = read_only
@@ -2392,6 +2395,9 @@ class LibvirtDriver(driver.ComputeDriver):
                       disk_images=None, network_info=None,
                       block_device_info=None, files=None,
                       admin_pass=None, inject_files=True):
+        def event(name):
+            coperf.event('cobalt:driver-%s' % name)
+
         if not suffix:
             suffix = ''
 
@@ -2423,6 +2429,8 @@ class LibvirtDriver(driver.ComputeDriver):
         libvirt_utils.write_to_file(
             self._get_console_log_path(instance), '', 7)
 
+        event('console-log')
+
         if not disk_images:
             disk_images = {'image_id': instance['image_ref'],
                            'kernel_id': instance['kernel_id'],
@@ -2436,6 +2444,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                 image_id=disk_images['kernel_id'],
                                 user_id=instance['user_id'],
                                 project_id=instance['project_id'])
+            event('cache-kernel')
             if disk_images['ramdisk_id']:
                 fname = imagecache.get_cache_fname(disk_images, 'ramdisk_id')
                 raw('ramdisk').cache(fetch_func=libvirt_utils.fetch_image,
@@ -2444,6 +2453,8 @@ class LibvirtDriver(driver.ComputeDriver):
                                      image_id=disk_images['ramdisk_id'],
                                      user_id=instance['user_id'],
                                      project_id=instance['project_id'])
+                event('cache-ramdisk')
+        event('kernel-disk')
 
         inst_type = flavors.extract_flavor(instance)
 
@@ -2483,6 +2494,7 @@ class LibvirtDriver(driver.ComputeDriver):
                              filename=fname,
                              size=size,
                              ephemeral_size=ephemeral_gb)
+        event('ephemeral-disk')
 
         for idx, eph in enumerate(driver.block_device_info_get_ephemerals(
                 block_device_info)):
@@ -2498,6 +2510,7 @@ class LibvirtDriver(driver.ComputeDriver):
                              filename=fname,
                              size=size,
                              ephemeral_size=eph['size'])
+        event('bdephs')
 
         if 'disk.swap' in disk_mapping:
             mapping = disk_mapping['disk.swap']
@@ -2517,6 +2530,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                          filename="swap_%s" % swap_mb,
                                          size=size,
                                          swap_mb=swap_mb)
+        event('disk.swap')
 
         # Config drive
         if configdrive.required_by(instance):
@@ -2594,6 +2608,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                     '%(img_id)s (%(e)s)'),
                                   {'img_id': img_id, 'e': e},
                                   instance=instance)
+        event('injection')
 
         if CONF.libvirt.virt_type == 'uml':
             libvirt_utils.chown(image('disk').path, 'root')
@@ -2971,16 +2986,20 @@ class LibvirtDriver(driver.ComputeDriver):
             'ramdisk_id' if a ramdisk is needed for the rescue image and
             'kernel_id' if a kernel is needed for the rescue image.
         """
+        def event(name):
+            coperf.event('ggc-%s' % name)
 
         inst_type = self.virtapi.flavor_get(
             nova_context.get_admin_context(read_deleted='yes'),
             instance['instance_type_id'])
+        event('flavor_get')
         inst_path = libvirt_utils.get_instance_path(instance)
         disk_mapping = disk_info['mapping']
 
         CONSOLE = "console=tty0 console=ttyS0"
 
         guest = vconfig.LibvirtConfigGuest()
+        event('libvirt-config-guest')
         guest.virt_type = CONF.libvirt.virt_type
         guest.name = instance['name']
         guest.uuid = instance['uuid']
@@ -2996,6 +3015,7 @@ class LibvirtDriver(driver.ComputeDriver):
                     setattr(guest, scope[1], value)
 
         guest.cpu = self.get_guest_cpu_config()
+        event('cpu_config')
 
         if 'root' in disk_mapping:
             root_device_name = block_device.prepend_dev(
@@ -3009,6 +3029,7 @@ class LibvirtDriver(driver.ComputeDriver):
             self.virtapi.instance_update(
                 nova_context.get_admin_context(), instance['uuid'],
                 {'root_device_name': root_device_name})
+        event('root-device')
 
         guest.os_type = vm_mode.get_from_instance(instance)
 
@@ -3030,6 +3051,7 @@ class LibvirtDriver(driver.ComputeDriver):
             if caps.host.cpu.arch in ("i686", "x86_64"):
                 guest.sysinfo = self.get_guest_config_sysinfo(instance)
                 guest.os_smbios = vconfig.LibvirtConfigGuestSMBIOS()
+        event('host-caps')
 
         if CONF.libvirt.virt_type == "lxc":
             guest.os_init_path = "/sbin/init"
@@ -3064,6 +3086,7 @@ class LibvirtDriver(driver.ComputeDriver):
                     guest.os_initrd = os.path.join(inst_path, "ramdisk")
             else:
                 guest.os_boot_dev = blockinfo.get_boot_order(disk_info)
+        event('cmdline')
 
         if ((CONF.libvirt.virt_type != "lxc" and
              CONF.libvirt.virt_type != "uml")):
@@ -3104,6 +3127,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                                  block_device_info,
                                                  inst_type):
             guest.add_device(cfg)
+        event('storage')
 
         for vif in network_info:
             cfg = self.vif_driver.get_config(instance,
@@ -3111,6 +3135,7 @@ class LibvirtDriver(driver.ComputeDriver):
                                              image_meta,
                                              inst_type)
             guest.add_device(cfg)
+        event('vifs')
 
         if ((CONF.libvirt.virt_type == "qemu" or
              CONF.libvirt.virt_type == "kvm")):
@@ -3130,6 +3155,7 @@ class LibvirtDriver(driver.ComputeDriver):
             consolepty = vconfig.LibvirtConfigGuestConsole()
             consolepty.type = "pty"
             guest.add_device(consolepty)
+        event('console')
 
         # We want a tablet if VNC is enabled,
         # or SPICE is enabled and the SPICE agent is disabled
@@ -3147,6 +3173,8 @@ class LibvirtDriver(driver.ComputeDriver):
             tablet.type = "tablet"
             tablet.bus = "usb"
             guest.add_device(tablet)
+
+        event('usb')
 
         if CONF.spice.enabled and CONF.spice.agent_enabled and \
                 CONF.libvirt.virt_type not in ('lxc', 'uml', 'xen'):
@@ -3193,6 +3221,8 @@ class LibvirtDriver(driver.ComputeDriver):
                 video.type = 'xen'
             guest.add_device(video)
 
+        event('graphics')
+
         # Qemu guest agent only support 'qemu' and 'kvm' hypervisor
         if CONF.libvirt.virt_type in ('qemu', 'kvm'):
             qga_enabled = False
@@ -3213,6 +3243,7 @@ class LibvirtDriver(driver.ComputeDriver):
                 qga.source_path = ("/var/lib/libvirt/qemu/%s.%s.sock" %
                                 ("org.qemu.guest_agent.0", instance['name']))
                 guest.add_device(qga)
+        event('guest-agent')
 
         if CONF.libvirt.virt_type in ('xen', 'qemu', 'kvm'):
             for pci_dev in pci_manager.get_instance_pci_devs(instance):
@@ -3221,18 +3252,22 @@ class LibvirtDriver(driver.ComputeDriver):
             if len(pci_manager.get_instance_pci_devs(instance)) > 0:
                 raise exception.PciDeviceUnsupportedHypervisor(
                     type=CONF.libvirt.virt_type)
+        event('pci')
 
         return guest
 
     def to_xml(self, context, instance, network_info, disk_info,
                image_meta=None, rescue=None,
                block_device_info=None, write_to_disk=False):
+        def event(name):
+            coperf.event('to_xml-%s' % name)
         # We should get image metadata every time for generating xml
         if image_meta is None:
             (image_service, image_id) = glance.get_remote_image_service(
                                             context, instance['image_ref'])
             image_meta = compute_utils.get_image_metadata(
                                 context, image_service, image_id, instance)
+        event('image_meta')
         LOG.debug(_('Start to_xml '
                     'network_info=%(network_info)s '
                     'disk_info=%(disk_info)s '
@@ -3244,7 +3279,9 @@ class LibvirtDriver(driver.ComputeDriver):
                   instance=instance)
         conf = self.get_guest_config(instance, network_info, image_meta,
                                      disk_info, rescue, block_device_info)
+        event('get_guest_config')
         xml = conf.to_xml()
+        event('conf.to_xml')
 
         if write_to_disk:
             instance_dir = libvirt_utils.get_instance_path(instance)

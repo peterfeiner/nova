@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import coperf
 
 import contextlib
 import errno
@@ -164,7 +165,7 @@ def lock(name, lock_file_prefix=None, external=False, lock_path=None):
             sem = threading.Semaphore()
             _semaphores[name] = sem
 
-    with sem:
+    with coperf.WaitWrapper('sem-%s' % name, sem):
         LOG.debug(_('Got semaphore "%(lock)s"'), {'lock': name})
 
         # NOTE(mikal): I know this looks odd
@@ -201,7 +202,7 @@ def lock(name, lock_file_prefix=None, external=False, lock_path=None):
 
                 try:
                     lock = InterProcessLock(lock_file_path)
-                    with lock as lock:
+                    with coperf.WaitWrapper('flock-%s' % lock_file_path, lock) as lock:
                         LOG.debug(_('Got file lock "%(lock)s" at %(path)s'),
                                   {'lock': name, 'path': lock_file_path})
                         yield lock

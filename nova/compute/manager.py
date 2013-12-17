@@ -27,6 +27,8 @@ terminating it.
 
 """
 
+import coperf
+
 import base64
 import contextlib
 import functools
@@ -4094,6 +4096,8 @@ class ComputeManager(manager.Manager):
         required for live migration without shared storage.
 
         """
+        coperf.set_thread_uuid(instance['uuid'])
+
         block_device_info = self._get_instance_volume_block_device_info(
                             context, instance, refresh_conn_info=True)
 
